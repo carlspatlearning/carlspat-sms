@@ -29,6 +29,10 @@ export default function NewStudentPage() {
     dateOfBirth: "", address: "", classRoomId: "", parentId: "",
     bloodGroup: "", genotype: "", allergies: "", medicalNotes: "", previousSchool: "",
   });
+  const [newParent, setNewParent] = useState({
+    firstName: "", lastName: "", phone: "", email: "", password: "",
+  });
+  const isNewParent = form.parentId === "__new__";
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -51,8 +55,20 @@ export default function NewStudentPage() {
         const up = await api.upload<ApiResponse<{ url: string }>>("/uploads/passport", passportFile);
         passportUrl = up.data.url;
       }
+      // Create the parent account first when "new parent" was chosen
+      let parentId = form.parentId;
+      if (isNewParent) {
+        const created = await api.post<ApiResponse<{ id: string }>>("/parents", {
+          firstName: newParent.firstName,
+          lastName: newParent.lastName,
+          email: newParent.email,
+          password: newParent.password,
+          phone: newParent.phone || undefined,
+        });
+        parentId = created.data.id;
+      }
       const payload = {
-        ...Object.fromEntries(Object.entries(form).filter(([, v]) => v !== "")),
+        ...Object.fromEntries(Object.entries({ ...form, parentId }).filter(([, v]) => v !== "")),
         ...(passportUrl ? { passportUrl } : {}),
       };
       const res = await api.post<ApiResponse<{ id: string; admissionNo: string }>>("/students", payload);
@@ -130,6 +146,7 @@ export default function NewStudentPage() {
               <Label htmlFor="parent">Parent / Guardian</Label>
               <Select id="parent" value={form.parentId} onChange={set("parentId")}>
                 <option value="">— Select parent —</option>
+                <option value="__new__">＋ Register a new parent…</option>
                 {parents.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.user.firstName} {p.user.lastName} ({p.user.email})
@@ -137,6 +154,39 @@ export default function NewStudentPage() {
                 ))}
               </Select>
             </div>
+            {isNewParent && (
+              <div className="grid gap-4 rounded-lg border bg-secondary/40 p-4 sm:col-span-2 sm:grid-cols-2">
+                <p className="text-sm font-medium sm:col-span-2">
+                  New parent / guardian — they will use the email and password below to log in to the parent portal.
+                </p>
+                <div>
+                  <Label htmlFor="npfn">Parent first name *</Label>
+                  <Input id="npfn" required value={newParent.firstName}
+                    onChange={(e) => setNewParent((p) => ({ ...p, firstName: e.target.value }))} />
+                </div>
+                <div>
+                  <Label htmlFor="npln">Parent last name *</Label>
+                  <Input id="npln" required value={newParent.lastName}
+                    onChange={(e) => setNewParent((p) => ({ ...p, lastName: e.target.value }))} />
+                </div>
+                <div>
+                  <Label htmlFor="npph">Parent phone number *</Label>
+                  <Input id="npph" required placeholder="080…" value={newParent.phone}
+                    onChange={(e) => setNewParent((p) => ({ ...p, phone: e.target.value }))} />
+                </div>
+                <div>
+                  <Label htmlFor="npem">Parent email (login) *</Label>
+                  <Input id="npem" type="email" required value={newParent.email}
+                    onChange={(e) => setNewParent((p) => ({ ...p, email: e.target.value }))} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label htmlFor="nppw">Temporary password *</Label>
+                  <Input id="nppw" required minLength={8} value={newParent.password}
+                    placeholder="At least 8 characters with a letter and a number"
+                    onChange={(e) => setNewParent((p) => ({ ...p, password: e.target.value }))} />
+                </div>
+              </div>
+            )}
             <div className="sm:col-span-2">
               <Label htmlFor="previousSchool">Previous school (academic history)</Label>
               <Input id="previousSchool" value={form.previousSchool} onChange={set("previousSchool")} />
