@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: carlspat
+      POSTGRES_PASSWORD: carlspat_dev_password
+      POSTGRES_DB: carlspat_sms
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carlspat -d carlspat_sms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://carlspat:carlspat_dev_password@db:5432/carlspat_sms?schema=public
+      JWT_ACCESS_SECRET: change-me-access-secret-min-32-characters!!
+      JWT_REFRESH_SECRET: change-me-refresh-secret-min-32-characters!
+      CORS_ORIGIN: http://localhost:3000
+      SEED_ON_START: "true"
+    ports:
+      - "4000:4000"
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

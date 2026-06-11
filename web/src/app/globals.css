@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 215 39% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 39% 12%;
+    --primary: 213 52% 25%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 215 39% 18%;
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 45%;
+    --accent: 43 88% 38%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 30% 88%;
+    --input: 214 30% 84%;
+    --ring: 213 52% 35%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 218 30% 9%;
+    --foreground: 210 30% 92%;
+    --card: 218 28% 13%;
+    --card-foreground: 210 30% 92%;
+    --primary: 213 60% 60%;
+    --primary-foreground: 218 30% 9%;
+    --secondary: 218 24% 19%;
+    --secondary-foreground: 210 30% 92%;
+    --muted: 218 24% 19%;
+    --muted-foreground: 215 16% 65%;
+    --accent: 43 80% 55%;
+    --accent-foreground: 218 30% 9%;
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 218 22% 24%;
+    --input: 218 22% 28%;
+    --ring: 213 60% 60%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+/* Print styles: hide chrome when printing report cards */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+  }
+}
