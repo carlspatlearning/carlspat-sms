@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
+import { Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { cn, formatDate, formatNaira, fullName } from "@/lib/utils";
@@ -94,6 +97,13 @@ export default function StudentDetailPage() {
     <div>
       <PageHeader title={fullName(student)} description={`${student.admissionNo} · ${student.classRoom?.name ?? "No class"}`}>
         <Badge variant={student.status === "ACTIVE" ? "success" : "secondary"}>{student.status}</Badge>
+        {user && ["SUPER_ADMIN", "ADMIN"].includes(user.role) && (
+          <Link href={`/dashboard/students/${student.id}/edit`}>
+            <Button variant="outline" size="sm">
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </Button>
+          </Link>
+        )}
       </PageHeader>
 
       <div className="mb-5 flex gap-1 overflow-x-auto rounded-lg border bg-card p-1">
