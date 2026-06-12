@@ -106,3 +106,38 @@ and branch protection on GitHub).
 - [ ] Daily `pg_dump` backups scheduled and restore tested (see DATABASE.md)
 - [ ] Audit log reviewed periodically (Admin → User Accounts → audit endpoint)
 - [ ] Rate limits left enabled (default: 1000 req/15 min global, 20 logins/15 min)
+
+## 7. Free deployment: Supabase (database) + Render (API) + Vercel (web)
+
+Supabase provides a free PostgreSQL database that never expires. Pair it with
+Render free web service for the API and Vercel free tier for the frontend for
+a NGN 0/month deployment.
+
+### 7.1 Database on Supabase
+1. Sign up at https://supabase.com with GitHub. Create a project (e.g. `carlspat-sms`),
+   region **West EU (London)** (closest to Nigeria), and set a strong database password.
+2. Project Settings -> Database -> Connection string -> **Session pooler** (IPv4-compatible).
+   It looks like:
+   `postgresql://postgres.abcdefgh:[PASSWORD]@aws-0-eu-west-2.pooler.supabase.com:5432/postgres`
+3. Replace `[PASSWORD]` with your database password. This is your `DATABASE_URL`.
+
+### 7.2 API on Render
+1. Sign up at https://render.com with GitHub. New -> Web Service -> pick the repo.
+2. Root Directory `server`. Build command:
+   `npm install && npx prisma generate && npx prisma migrate deploy && npm run build`
+   Start command: `npm start`. Instance type: **Free**.
+3. Environment variables: `DATABASE_URL` (from 7.1), `JWT_ACCESS_SECRET`,
+   `JWT_REFRESH_SECRET` (long random strings), `CORS_ORIGIN` (your Vercel URL),
+   `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` (required:
+   Render free disks are wiped on every deploy, so images must live in Cloudinary).
+4. After the first deploy, run the seed once from the service Shell tab: `npm run seed`.
+5. Note the public URL, e.g. `https://carlspat-api.onrender.com`.
+
+Note: free Render services sleep after 15 minutes of inactivity; the first request
+after a sleep takes ~30-60 s. Upgrade to the USD 7/month instance to remove this.
+
+### 7.3 Web on Vercel
+1. Sign up at https://vercel.com with GitHub. Add New -> Project -> import the repo.
+2. Root Directory `web`. Environment variable:
+   `NEXT_PUBLIC_API_URL=https://carlspat-api.onrender.com/api/v1`
+3. Deploy, then put the resulting URL into the API's `CORS_ORIGIN` on Render.

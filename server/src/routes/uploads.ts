@@ -1,14 +1,27 @@
-import { Router } from "express";
+import { Request, Router } from "express";
 import multer from "multer";
 import { Role } from "@prisma/client";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
 import { audit } from "../middleware/audit";
-import { uploadImage } from "../services/storage";
+import { uploadImage, UploadResult } from "../services/storage";
 
 const router = Router();
 router.use(authenticate);
+
+/**
+ * Locally-stored files are served by THIS API server, so the URL must be
+ * absolute (http://api-host/uploads/...). A relative path would be resolved
+ * against the web app's origin and 404 - which is why logos/passports were
+ * not displaying. Cloudinary URLs are already absolute.
+ */
+function withAbsoluteUrl(req: Request, result: UploadResult): UploadResult {
+  if (result.provider === "local" && result.url.startsWith("/")) {
+    return { ...result, url: `${req.protocol}://${req.get("host")}${result.url}` };
+  }
+  return result;
+}
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
@@ -23,51 +36,51 @@ const upload = multer({
   },
 });
 
-// POST /uploads/passport — student passport photographs (admin)
+// POST /uploads/passport - student passport photographs (admin)
 router.post(
   "/passport",
   authorize(...ADMINS),
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file uploaded (use multipart field 'file')");
-    const result = await uploadImage(req.file.buffer, "passports", req.file.originalname);
+    const result = withAbsoluteUrl(req, await uploadImage(req.file.buffer, "passports", req.file.originalname));
     audit(req, "upload.passport", "File", result.url);
     res.status(201).json({ success: true, data: result });
   })
 );
 
-// POST /uploads/logo — school logo / stamp (admin)
+// POST /uploads/logo - school logo / stamp (admin)
 router.post(
   "/logo",
   authorize(...ADMINS),
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file uploaded (use multipart field 'file')");
-    const result = await uploadImage(req.file.buffer, "branding", req.file.originalname);
+    const result = withAbsoluteUrl(req, await uploadImage(req.file.buffer, "branding", req.file.originalname));
     audit(req, "upload.logo", "File", result.url);
     res.status(201).json({ success: true, data: result });
   })
 );
 
-// POST /uploads/avatar — any logged-in user's profile photo
+// POST /uploads/avatar - any logged-in user's profile photo
 router.post(
   "/avatar",
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file uploaded (use multipart field 'file')");
-    const result = await uploadImage(req.file.buffer, "avatars", req.file.originalname);
+    const result = withAbsoluteUrl(req, await uploadImage(req.file.buffer, "avatars", req.file.originalname));
     res.status(201).json({ success: true, data: result });
   })
 );
 
-// POST /uploads/materials — learning materials (teachers/admins); students download
+// POST /uploads/materials - learning materials (teachers/admins); students download
 router.post(
   "/materials",
   authorize(Role.TEACHER, ...ADMINS),
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file uploaded (use multipart field 'file')");
-    const result = await uploadImage(req.file.buffer, "materials", req.file.originalname);
+    const result = withAbsoluteUrl(req, await uploadImage(req.file.buffer, "materials", req.file.originalname));
     audit(req, "upload.material", "File", result.url);
     res.status(201).json({ success: true, data: result });
   })

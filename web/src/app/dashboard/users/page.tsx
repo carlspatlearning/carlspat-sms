@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, Plus } from "lucide-react";
+import { KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { formatDate, ROLE_LABELS } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -20,6 +20,7 @@ interface UserRow {
   role: string;
   firstName: string;
   lastName: string;
+  phone: string | null;
   isActive: boolean;
   lastLoginAt: string | null;
   createdAt: string;
@@ -34,6 +35,52 @@ export default function UsersPage() {
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", password: "", role: "ACCOUNTANT" });
   const [pwUser, setPwUser] = useState<UserRow | null>(null);
   const [pwValue, setPwValue] = useState("");
+  const [editUser, setEditUser] = useState<UserRow | null>(null);
+  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", email: "", phone: "", role: "ADMIN" });
+
+  function openEdit(u: UserRow) {
+    setEditUser(u);
+    setEditForm({
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email,
+      phone: u.phone ?? "",
+      role: u.role,
+    });
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editUser) return;
+    setSaving(true);
+    try {
+      await api.patch(`/users/${editUser.id}`, {
+        firstName: editForm.firstName,
+        lastName: editForm.lastName,
+        email: editForm.email,
+        phone: editForm.phone || undefined,
+        ...(editForm.role !== editUser.role ? { role: editForm.role } : {}),
+      });
+      setEditUser(null);
+      setMessage({ type: "success", text: "Account updated." });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to update account" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeUser(u: UserRow) {
+    if (!confirm(`Remove the account of ${u.firstName} ${u.lastName} (${u.email})?`)) return;
+    try {
+      const r = await api.delete<{ message: string }>(`/users/${u.id}`);
+      setMessage({ type: "success", text: r.message });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to remove account" });
+    }
+  }
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ pageSize: "50" });
@@ -127,11 +174,17 @@ export default function UsersPage() {
               <TD><Badge variant={u.isActive ? "success" : "destructive"}>{u.isActive ? "Active" : "Disabled"}</Badge></TD>
               <TD className="text-right">
                 <div className="flex justify-end gap-1.5">
+                  <Button variant="outline" size="sm" onClick={() => openEdit(u)}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => { setPwUser(u); setPwValue(""); }}>
                     <KeyRound className="h-3.5 w-3.5" /> Reset password
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => toggleActive(u)}>
                     {u.isActive ? "Disable" : "Enable"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => removeUser(u)} aria-label="Remove account">
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
                   </Button>
                 </div>
               </TD>
@@ -139,6 +192,49 @@ export default function UsersPage() {
           ))}
         </TBody>
       </Table>
+
+      <Dialog open={Boolean(editUser)} onClose={() => setEditUser(null)} title={`Edit account — ${editUser?.email ?? ""}`}>
+        <form onSubmit={saveEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="eufn">First name</Label>
+              <Input id="eufn" required value={editForm.firstName} onChange={(e) => setEditForm((f) => ({ ...f, firstName: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="euln">Last name</Label>
+              <Input id="euln" required value={editForm.lastName} onChange={(e) => setEditForm((f) => ({ ...f, lastName: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="euem">Email (login)</Label>
+            <Input id="euem" type="email" required value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="euph">Phone</Label>
+              <Input id="euph" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="eurole">Role</Label>
+              <Select id="eurole" value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))}>
+                <option value="SUPER_ADMIN">Super Admin</option>
+                <option value="ADMIN">School Admin</option>
+                <option value="ACCOUNTANT">Bursar / Accountant</option>
+                <option value="TEACHER">Teacher</option>
+                <option value="PARENT">Parent</option>
+                <option value="STUDENT">Student</option>
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Role changes only apply to standalone accounts (admins/bursars). Accounts linked to a teacher,
+            parent or student profile keep their role.
+          </p>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Save changes
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={Boolean(pwUser)} onClose={() => setPwUser(null)} title={`Reset password — ${pwUser?.firstName ?? ""} ${pwUser?.lastName ?? ""}`}>
         <form onSubmit={resetPassword} className="space-y-4">
