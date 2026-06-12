@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Link2, Loader2, Plus, Search } from "lucide-react";
+import { KeyRound, Link2, Loader2, Plus, Search } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { PageHeader } from "@/components/page-header";
@@ -33,6 +33,8 @@ export default function ParentsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [linkParent, setLinkParent] = useState<ParentRow | null>(null);
   const [linkStudentId, setLinkStudentId] = useState("");
+  const [pwParent, setPwParent] = useState<ParentRow | null>(null);
+  const [pwValue, setPwValue] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -75,6 +77,25 @@ export default function ParentsPage() {
       load();
     } catch (err) {
       setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to create parent" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pwParent) return;
+    setSaving(true);
+    try {
+      await api.patch(`/users/${pwParent.user.id}`, { newPassword: pwValue });
+      setMessage({
+        type: "success",
+        text: `New login details for ${pwParent.user.firstName} ${pwParent.user.lastName} — email: ${pwParent.user.email}, password: the one you just set. Share them securely.`,
+      });
+      setPwParent(null);
+      setPwValue("");
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to set password" });
     } finally {
       setSaving(false);
     }
@@ -145,9 +166,14 @@ export default function ParentsPage() {
               </TD>
               {isAdmin && (
                 <TD className="text-right">
-                  <Button variant="outline" size="sm" onClick={() => setLinkParent(p)}>
-                    <Link2 className="h-3.5 w-3.5" /> Link child
-                  </Button>
+                  <div className="flex justify-end gap-1.5">
+                    <Button variant="outline" size="sm" onClick={() => setLinkParent(p)}>
+                      <Link2 className="h-3.5 w-3.5" /> Link child
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { setPwParent(p); setPwValue(""); }}>
+                      <KeyRound className="h-3.5 w-3.5" /> Login details
+                    </Button>
+                  </div>
                 </TD>
               )}
             </TR>
@@ -206,6 +232,27 @@ export default function ParentsPage() {
           </div>
           <Button type="submit" className="w-full" disabled={saving}>
             {saving && <Loader2 className="h-4 w-4 animate-spin" />} Create parent account
+          </Button>
+        </form>
+      </Dialog>
+
+      <Dialog open={Boolean(pwParent)} onClose={() => setPwParent(null)} title={`Login details — ${pwParent?.user.firstName ?? ""} ${pwParent?.user.lastName ?? ""}`}>
+        <form onSubmit={resetPassword} className="space-y-4">
+          <div className="rounded-lg border bg-secondary/40 p-3 text-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Login email</p>
+            <p className="mt-0.5 font-mono">{pwParent?.user.email}</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              The parent signs in at this portal with the email above and the password you set below.
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="newpw">Set a new password</Label>
+            <Input id="newpw" required minLength={8} value={pwValue}
+              placeholder="At least 8 characters with a letter and a number"
+              onChange={(e) => setPwValue(e.target.value)} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Set password
           </Button>
         </form>
       </Dialog>

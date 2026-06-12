@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { KeyRound, Loader2, Plus } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { formatDate, ROLE_LABELS } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -32,6 +32,8 @@ export default function UsersPage() {
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", password: "", role: "ACCOUNTANT" });
+  const [pwUser, setPwUser] = useState<UserRow | null>(null);
+  const [pwValue, setPwValue] = useState("");
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ pageSize: "50" });
@@ -51,6 +53,25 @@ export default function UsersPage() {
       load();
     } catch (err) {
       setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pwUser) return;
+    setSaving(true);
+    try {
+      await api.patch(`/users/${pwUser.id}`, { newPassword: pwValue });
+      setMessage({
+        type: "success",
+        text: `Password reset for ${pwUser.firstName} ${pwUser.lastName} (${pwUser.email}). They are now logged out everywhere and must use the new password.`,
+      });
+      setPwUser(null);
+      setPwValue("");
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to reset password" });
     } finally {
       setSaving(false);
     }
@@ -105,14 +126,37 @@ export default function UsersPage() {
               <TD className="hidden text-xs md:table-cell">{u.lastLoginAt ? formatDate(u.lastLoginAt) : "Never"}</TD>
               <TD><Badge variant={u.isActive ? "success" : "destructive"}>{u.isActive ? "Active" : "Disabled"}</Badge></TD>
               <TD className="text-right">
-                <Button variant="outline" size="sm" onClick={() => toggleActive(u)}>
-                  {u.isActive ? "Disable" : "Enable"}
-                </Button>
+                <div className="flex justify-end gap-1.5">
+                  <Button variant="outline" size="sm" onClick={() => { setPwUser(u); setPwValue(""); }}>
+                    <KeyRound className="h-3.5 w-3.5" /> Reset password
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => toggleActive(u)}>
+                    {u.isActive ? "Disable" : "Enable"}
+                  </Button>
+                </div>
               </TD>
             </TR>
           ))}
         </TBody>
       </Table>
+
+      <Dialog open={Boolean(pwUser)} onClose={() => setPwUser(null)} title={`Reset password — ${pwUser?.firstName ?? ""} ${pwUser?.lastName ?? ""}`}>
+        <form onSubmit={resetPassword} className="space-y-4">
+          <div className="rounded-lg border bg-secondary/40 p-3 text-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Login email</p>
+            <p className="mt-0.5 font-mono">{pwUser?.email}</p>
+          </div>
+          <div>
+            <Label htmlFor="rpw">New password</Label>
+            <Input id="rpw" required minLength={8} value={pwValue}
+              placeholder="At least 8 characters with a letter and a number"
+              onChange={(e) => setPwValue(e.target.value)} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Reset password
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Create account">
         <form onSubmit={createUser} className="space-y-4">
