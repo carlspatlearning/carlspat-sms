@@ -1,12 +1,12 @@
-# Carlspat SMS — Deployment & Production Setup Guide
+﻿# Carlspat SMS â€” Deployment & Production Setup Guide
 
 Recommended topology (free/cheap tiers available):
 
-- **Frontend** → Vercel
-- **Backend + PostgreSQL** → Railway (or Render / AWS)
-- **Images** → Cloudinary
-- **Email/SMS** → SendGrid / Twilio
-- **Payments** → Paystack and/or Flutterwave
+- **Frontend** â†’ Vercel
+- **Backend + PostgreSQL** â†’ Railway (or Render / AWS)
+- **Images** â†’ Cloudinary
+- **Email/SMS** â†’ SendGrid / Twilio
+- **Payments** â†’ Paystack and/or Flutterwave
 
 HTTPS is terminated automatically by Vercel/Railway/Render. Never expose the API over plain HTTP in production.
 
@@ -14,8 +14,8 @@ HTTPS is terminated automatically by Vercel/Railway/Render. Never expose the API
 
 ## 1. Backend on Railway
 
-1. Create a project → **Add PostgreSQL** (Railway provisions `DATABASE_URL`).
-2. **Add service → GitHub repo**, root directory `server/`. Railway detects the Dockerfile.
+1. Create a project â†’ **Add PostgreSQL** (Railway provisions `DATABASE_URL`).
+2. **Add service â†’ GitHub repo**, root directory `server/`. Railway detects the Dockerfile.
 3. Set environment variables:
 
 ```env
@@ -40,31 +40,31 @@ TWILIO_FROM_NUMBER=+1...
 
 4. The container entrypoint runs `prisma migrate deploy` then starts the API,
    so schema changes apply automatically on each deploy.
-5. One-time: open a shell on the service and seed → `npx prisma db seed`.
+5. One-time: open a shell on the service and seed â†’ `npx prisma db seed`.
 
-**Render equivalent:** New Web Service → root `server` → Docker; New PostgreSQL; same env vars.
+**Render equivalent:** New Web Service â†’ root `server` â†’ Docker; New PostgreSQL; same env vars.
 **AWS equivalent:** ECR + ECS Fargate (or a single EC2 with docker compose) + RDS PostgreSQL behind an ALB with an ACM certificate.
 
 ## 2. Frontend on Vercel
 
-1. **Import the repo** → set **Root Directory = `web`**. Vercel auto-detects Next.js.
+1. **Import the repo** â†’ set **Root Directory = `web`**. Vercel auto-detects Next.js.
 2. Environment variable:
 
 ```env
 NEXT_PUBLIC_API_URL=https://<your-railway-api-domain>/api/v1
 ```
 
-3. Deploy. Add your custom domain (e.g. `portal.carlspat.sch.ng`) in Vercel → Domains.
+3. Deploy. Add your custom domain (e.g. `portal.carlspat.sch.ng`) in Vercel â†’ Domains.
 4. Update `CORS_ORIGIN` on the backend to the final frontend URL(s), comma-separated.
 
 ## 3. Payment gateway webhooks
 
 | Gateway | Dashboard setting | URL |
 |---|---|---|
-| Paystack | Settings → API Keys & Webhooks | `https://<api-domain>/api/v1/payments/webhooks/paystack` |
-| Flutterwave | Settings → Webhooks (set the secret hash = `FLUTTERWAVE_WEBHOOK_HASH`) | `https://<api-domain>/api/v1/payments/webhooks/flutterwave` |
+| Paystack | Settings â†’ API Keys & Webhooks | `https://<api-domain>/api/v1/payments/webhooks/paystack` |
+| Flutterwave | Settings â†’ Webhooks (set the secret hash = `FLUTTERWAVE_WEBHOOK_HASH`) | `https://<api-domain>/api/v1/payments/webhooks/flutterwave` |
 
-Webhook signatures are verified server-side (HMAC-SHA512 for Paystack, `verif-hash` for Flutterwave); payments only flip from PENDING → SUCCESS via a valid webhook.
+Webhook signatures are verified server-side (HMAC-SHA512 for Paystack, `verif-hash` for Flutterwave); payments only flip from PENDING â†’ SUCCESS via a valid webhook.
 
 ## 4. Docker self-hosting (single VPS)
 
@@ -89,8 +89,8 @@ api.example.com {
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on every push/PR:
 
-1. **server**: `npm ci` → `prisma generate` → `tsc --noEmit` → `jest` (22 tests)
-2. **web**: `npm ci` → `next build` (includes type checking)
+1. **server**: `npm ci` â†’ `prisma generate` â†’ `tsc --noEmit` â†’ `jest` (22 tests)
+2. **web**: `npm ci` â†’ `next build` (includes type checking)
 
 Vercel and Railway both auto-deploy on push to `main` once connected; the CI gate
 ensures broken commits never reach them (enable "Wait for CI" in Railway settings
@@ -99,12 +99,12 @@ and branch protection on GitHub).
 ## 6. Production checklist
 
 - [ ] All six seeded demo passwords changed (or demo users deleted/disabled)
-- [ ] `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` ≥ 48 random bytes, unique per environment
+- [ ] `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` â‰¥ 48 random bytes, unique per environment
 - [ ] `CORS_ORIGIN` lists only the real frontend domain(s)
 - [ ] Live (not test) Paystack/Flutterwave keys; webhooks configured and test-fired
 - [ ] Cloudinary configured (local `/uploads` storage is for development only)
 - [ ] Daily `pg_dump` backups scheduled and restore tested (see DATABASE.md)
-- [ ] Audit log reviewed periodically (Admin → User Accounts → audit endpoint)
+- [ ] Audit log reviewed periodically (Admin â†’ User Accounts â†’ audit endpoint)
 - [ ] Rate limits left enabled (default: 1000 req/15 min global, 20 logins/15 min)
 
 ## 7. Free deployment: Supabase (database) + Render (API) + Vercel (web)
@@ -124,13 +124,13 @@ a NGN 0/month deployment.
 ### 7.2 API on Render
 1. Sign up at https://render.com with GitHub. New -> Web Service -> pick the repo.
 2. Root Directory `server`. Build command:
-   `npm install && npx prisma generate && npx prisma migrate deploy && npm run build`
+   `npm install && npx prisma generate && npx prisma migrate deploy && npm run seed && npm run build`
    Start command: `npm start`. Instance type: **Free**.
 3. Environment variables: `DATABASE_URL` (from 7.1), `JWT_ACCESS_SECRET`,
    `JWT_REFRESH_SECRET` (long random strings), `CORS_ORIGIN` (your Vercel URL),
    `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` (required:
    Render free disks are wiped on every deploy, so images must live in Cloudinary).
-4. After the first deploy, run the seed once from the service Shell tab: `npm run seed`.
+4. The seed runs during the build (it is idempotent - safe to run on every deploy).
 5. Note the public URL, e.g. `https://carlspat-api.onrender.com`.
 
 Note: free Render services sleep after 15 minutes of inactivity; the first request
