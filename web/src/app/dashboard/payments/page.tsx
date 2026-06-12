@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2, Plus, Search } from "lucide-react";
+import { Download, Loader2, Pencil, Plus, Search } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { formatNaira, formatDate } from "@/lib/utils";
@@ -21,6 +21,9 @@ interface PaymentRow {
   amount: string;
   method: string;
   status: string;
+  gateway: string | null;
+  notes: string | null;
+  reference: string | null;
   paidAt: string;
   student: { id: string; firstName: string; lastName: string; admissionNo: string; classRoom: { name: string } | null };
   term: { name: string; session: { name: string } };
@@ -43,6 +46,39 @@ export default function PaymentsPage() {
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [form, setForm] = useState({ studentId: "", amount: "", method: "CASH", reference: "", notes: "" });
   const [saving, setSaving] = useState(false);
+  const [editPayment, setEditPayment] = useState<PaymentRow | null>(null);
+  const [editForm, setEditForm] = useState({ amount: "", method: "CASH", reference: "", notes: "" });
+
+  function openEdit(p: PaymentRow) {
+    setEditPayment(p);
+    setEditForm({
+      amount: String(Number(p.amount)),
+      method: p.method,
+      reference: p.reference ?? "",
+      notes: p.notes ?? "",
+    });
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editPayment) return;
+    setSaving(true);
+    try {
+      await api.patch(`/payments/${editPayment.id}`, {
+        amount: Number(editForm.amount),
+        method: editForm.method,
+        reference: editForm.reference || null,
+        notes: editForm.notes || null,
+      });
+      setEditPayment(null);
+      setMessage({ type: "success", text: `Payment ${editPayment.receiptNo} updated — balances recalculate automatically.` });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to update payment" });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -159,11 +195,18 @@ export default function PaymentsPage() {
               <TD className="hidden text-xs lg:table-cell">{formatDate(p.paidAt)}</TD>
               <TD className="text-right font-semibold">{formatNaira(Number(p.amount))}</TD>
               <TD>
-                {p.status === "SUCCESS" && (
-                  <Button variant="ghost" size="icon" title="Download receipt" onClick={() => downloadReceipt(p)}>
-                    <Download className="h-4 w-4" />
-                  </Button>
-                )}
+                <div className="flex justify-end">
+                  {isManager && !p.gateway && (
+                    <Button variant="ghost" size="icon" title="Edit payment" onClick={() => openEdit(p)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {p.status === "SUCCESS" && (
+                    <Button variant="ghost" size="icon" title="Download receipt" onClick={() => downloadReceipt(p)}>
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </TD>
             </TR>
           ))}
@@ -182,6 +225,49 @@ export default function PaymentsPage() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={Boolean(editPayment)}
+        onClose={() => setEditPayment(null)}
+        title={`Edit payment — ${editPayment?.receiptNo ?? ""}`}
+      >
+        <form onSubmit={saveEdit} className="space-y-4">
+          <div className="rounded-lg border bg-secondary/40 p-3 text-sm">
+            {editPayment?.student.firstName} {editPayment?.student.lastName} ({editPayment?.student.admissionNo})
+            <span className="block text-xs text-muted-foreground">
+              The receipt and the student&apos;s outstanding balance update automatically after saving.
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="eamount">Amount (₦)</Label>
+              <Input id="eamount" type="number" min="1" step="0.01" required value={editForm.amount}
+                onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="emethod">Method</Label>
+              <Select id="emethod" value={editForm.method} onChange={(e) => setEditForm((f) => ({ ...f, method: e.target.value }))}>
+                <option value="CASH">Cash</option>
+                <option value="BANK_TRANSFER">Bank Transfer</option>
+                <option value="CARD">Card</option>
+                <option value="POS">POS</option>
+                <option value="CHEQUE">Cheque</option>
+              </Select>
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="eref">Reference</Label>
+            <Input id="eref" value={editForm.reference} onChange={(e) => setEditForm((f) => ({ ...f, reference: e.target.value }))} />
+          </div>
+          <div>
+            <Label htmlFor="enotes">Notes</Label>
+            <Input id="enotes" value={editForm.notes} onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Save changes
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Record offline payment">
         <form onSubmit={recordPayment} className="space-y-4">

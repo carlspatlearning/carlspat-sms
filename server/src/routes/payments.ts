@@ -174,6 +174,44 @@ router.post(
   })
 );
 
+// PATCH /payments/:id — correct a recorded payment (offline payments only;
+// gateway-confirmed online payments must not be altered)
+router.patch(
+  "/:id",
+  authorize(...FEE_MANAGERS),
+  validate(
+    z.object({
+      body: z.object({
+        amount: z.number().positive().optional(),
+        method: z.nativeEnum(PaymentMethod).optional(),
+        reference: z.string().nullable().optional(),
+        notes: z.string().nullable().optional(),
+        paidAt: z.coerce.date().optional(),
+      }),
+    })
+  ),
+  asyncHandler(async (req, res) => {
+    const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if (!payment) throw ApiError.notFound("Payment not found");
+    if (payment.gateway) {
+      throw ApiError.badRequest(
+        "Online payments confirmed by the payment gateway cannot be edited. Record a correcting entry instead."
+      );
+    }
+    const before = { amount: Number(payment.amount), method: payment.method };
+    const updated = await prisma.payment.update({
+      where: { id: payment.id },
+      data: req.body,
+      include: { student: { select: { firstName: true, lastName: true, admissionNo: true } } },
+    });
+    audit(req, "payment.update", "Payment", payment.id, {
+      before,
+      after: { amount: Number(updated.amount), method: updated.method },
+    });
+    res.json({ success: true, data: updated });
+  })
+);
+
 // GET /payments/:id/receipt — PDF receipt
 router.get(
   "/:id/receipt",
