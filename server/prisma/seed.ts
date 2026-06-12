@@ -58,12 +58,9 @@ async function main() {
 
   // ── Assessment structure (admin-editable) ────────────────────────────────
   const assessmentDefs = [
-    { name: "First Test", maxScore: 10, order: 1, isExam: false },
-    { name: "Second Test", maxScore: 10, order: 2, isExam: false },
-    { name: "Assignment", maxScore: 10, order: 3, isExam: false },
-    { name: "Project", maxScore: 10, order: 4, isExam: false },
-    { name: "Mid-Term Exam", maxScore: 20, order: 5, isExam: true },
-    { name: "Final Exam", maxScore: 40, order: 6, isExam: true },
+    { name: "CA 1", maxScore: 20, order: 1, isExam: false },
+    { name: "CA 2", maxScore: 20, order: 2, isExam: false },
+    { name: "Exam", maxScore: 60, order: 3, isExam: true },
   ];
   const assessments: Record<string, { id: string; maxScore: number }> = {};
   for (const a of assessmentDefs) {
@@ -275,24 +272,26 @@ async function main() {
     });
   }
 
-  // ── Sample scores for the current term ───────────────────────────────────
+  // ── Sample scores for all three terms (so cumulative columns show) ───────
   const scoreCount = await prisma.score.count();
   if (scoreCount === 0) {
     const rand = (max: number) => Math.round(max * (0.5 + Math.random() * 0.5));
     const subjectCodes = ["ENG", "MTH", "BSC", "SOS", "CMP", "CRS"];
-    for (const st of students) {
-      for (const code of subjectCodes) {
-        for (const a of Object.keys(assessments)) {
-          await prisma.score.create({
-            data: {
-              studentId: st.id,
-              subjectId: subjects[code].id,
-              termId: currentTerm.id,
-              assessmentTypeId: assessments[a].id,
-              score: rand(assessments[a].maxScore),
-              recordedById: teacherUser.id,
-            },
-          });
+    for (const termName of Object.keys(terms)) {
+      for (const st of students) {
+        for (const code of subjectCodes) {
+          for (const a of Object.keys(assessments)) {
+            await prisma.score.create({
+              data: {
+                studentId: st.id,
+                subjectId: subjects[code].id,
+                termId: terms[termName].id,
+                assessmentTypeId: assessments[a].id,
+                score: rand(assessments[a].maxScore),
+                recordedById: teacherUser.id,
+              },
+            });
+          }
         }
       }
     }

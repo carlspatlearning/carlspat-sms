@@ -12,7 +12,13 @@ export interface SubjectResult {
   percentage: number;
   grade: string;
   remark: string;
+  /** Totals from earlier terms in the same session (2nd/3rd term reports). */
+  previousTerms: { term: string; total: number | null }[];
+  /** Average of term totals (previous + current), on the 0–maxTotal scale. */
+  cumulativeAvg: number | null;
 }
+
+export type PromotionDecision = "PROMOTED" | "REPEAT";
 
 export interface StudentTermResult {
   studentId: string;
@@ -26,7 +32,17 @@ export interface StudentTermResult {
   position: number | null;
   positionLabel: string | null;
   classSize: number;
+  /** Names of earlier terms in this session, in order (for table headers). */
+  previousTermNames: string[];
+  /** Session average across all terms so far (percentage), null in first term. */
+  cumulativeAverage: number | null;
+  /** True when this is the last term of the academic session. */
+  isFinalTerm: boolean;
+  /** Stamped on the report card: average ≥ 50% → PROMOTED, below 50% → REPEAT. */
+  promotionDecision: PromotionDecision | null;
 }
+
+const PROMOTION_THRESHOLD = 50;
 
 /** Full computed result sheet for one student in one term. */
 export async function computeStudentResult(studentId: string, termId: string): Promise<StudentTermResult> {
@@ -36,7 +52,7 @@ export async function computeStudentResult(studentId: string, termId: string): P
   });
   if (!student) throw ApiError.notFound("Student not found");
 
-  const [assessmentTypes, gradeScale, scores] = await Promise.all([
+  const [assessmentTypes, gradeScale, scores, term] = await Promise.all([
     prisma.assessmentType.findMany({
       where: { schoolId: student.schoolId, isActive: true },
       orderBy: { order: "asc" },
@@ -46,7 +62,28 @@ export async function computeStudentResult(studentId: string, termId: string): P
       where: { studentId, termId },
       include: { subject: true },
     }),
+    prisma.term.findUnique({
+      where: { id: termId },
+      include: { session: { include: { terms: { orderBy: { startDate: "asc" } } } } },
+    }),
   ]);
+
+  // Earlier terms in the same session (drives cumulative columns + promotion)
+  const sessionTerms = term?.session.terms ?? [];
+  const termIndex = sessionTerms.findIndex((t) => t.id === termId);
+  const earlierTerms = termIndex > 0 ? sessionTerms.slice(0, termIndex) : [];
+  const isFinalTerm = sessionTerms.length >= 2 && termIndex === sessionTerms.length - 1;
+
+  // Per-subject totals for each earlier term
+  const prevTotalsByTerm = new Map<string, Map<string, number>>();
+  for (const et of earlierTerms) {
+    const grouped = await prisma.score.groupBy({
+      by: ["subjectId"],
+      where: { studentId, termId: et.id },
+      _sum: { score: true },
+    });
+    prevTotalsByTerm.set(et.id, new Map(grouped.map((g) => [g.subjectId, Number(g._sum.score ?? 0)])));
+  }
 
   // Group scores by subject
   const bySubject = new Map<string, { subject: string; code: string; scores: Map<string, number> }>();
@@ -68,6 +105,13 @@ export async function computeStudentResult(studentId: string, termId: string): P
     const total = rows.reduce((sum, r) => sum + (r.score ?? 0), 0);
     const percentage = maxTotal > 0 ? (total / maxTotal) * 100 : 0;
     const band = resolveGrade(percentage, gradeScale);
+    const previousTerms = earlierTerms.map((et) => ({
+      term: et.name,
+      total: prevTotalsByTerm.get(et.id)?.get(subjectId) ?? null,
+    }));
+    const termTotals = [...previousTerms.map((p) => p.total).filter((t): t is number => t !== null), total];
+    const cumulativeAvg =
+      earlierTerms.length > 0 ? Math.round((termTotals.reduce((a, b) => a + b, 0) / termTotals.length) * 10) / 10 : null;
     subjects.push({
       subjectId,
       subject: data.subject,
@@ -78,6 +122,8 @@ export async function computeStudentResult(studentId: string, termId: string): P
       percentage: Math.round(percentage * 10) / 10,
       grade: band?.grade ?? "-",
       remark: band?.remark ?? "-",
+      previousTerms,
+      cumulativeAvg,
     });
   }
   subjects.sort((a, b) => a.subject.localeCompare(b.subject));
@@ -97,6 +143,25 @@ export async function computeStudentResult(studentId: string, termId: string): P
     position = mine?.position ?? null;
   }
 
+  // Session (cumulative) average: mean of each term's overall percentage
+  const termAverages: number[] = [];
+  for (const et of earlierTerms) {
+    const totals = [...(prevTotalsByTerm.get(et.id)?.values() ?? [])];
+    if (totals.length > 0 && maxTotal > 0) {
+      termAverages.push((totals.reduce((a, b) => a + b, 0) / (totals.length * maxTotal)) * 100);
+    }
+  }
+  if (subjects.length > 0) termAverages.push(average);
+  const cumulativeAverage =
+    earlierTerms.length > 0 && termAverages.length > 0
+      ? Math.round((termAverages.reduce((a, b) => a + b, 0) / termAverages.length) * 10) / 10
+      : null;
+
+  // Promotion stamp on every report card: average score ≥ 50% → PROMOTED,
+  // below 50% → REPEAT. No stamp when there are no scores yet.
+  const promotionDecision: PromotionDecision | null =
+    subjects.length > 0 ? (average >= PROMOTION_THRESHOLD ? "PROMOTED" : "REPEAT") : null;
+
   return {
     studentId,
     termId,
@@ -109,6 +174,10 @@ export async function computeStudentResult(studentId: string, termId: string): P
     position,
     positionLabel: position ? ordinal(position) : null,
     classSize,
+    previousTermNames: earlierTerms.map((t) => t.name),
+    cumulativeAverage,
+    isFinalTerm,
+    promotionDecision,
   };
 }
 

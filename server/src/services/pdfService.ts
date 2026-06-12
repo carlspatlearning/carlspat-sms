@@ -117,7 +117,17 @@ export async function renderReportCard(data: ReportCardData, verifyUrl: string):
 
   // ── Scores table ─────────────────────────────────────────────────────────
   const assessments = data.result.subjects[0]?.scores.map((s) => s.assessment) ?? [];
-  const headers = ["Subject", ...assessments.map(abbreviate), "Total", "%", "Grade", "Remark"];
+  const prevTerms = data.result.previousTermNames;
+  const headers = [
+    "Subject",
+    ...assessments.map(abbreviate),
+    "Total",
+    ...prevTerms.map(abbreviate),
+    ...(prevTerms.length > 0 ? ["Cum"] : []),
+    "%",
+    "Grade",
+    "Remark",
+  ];
   const subjectColW = 120;
   const remarkColW = 64;
   const otherColW = (pageWidth - subjectColW - remarkColW) / (headers.length - 2);
@@ -146,6 +156,8 @@ export async function renderReportCard(data: ReportCardData, verifyUrl: string):
         subj.subject,
         ...subj.scores.map((s) => (s.score === null ? "—" : String(s.score))),
         String(subj.total),
+        ...subj.previousTerms.map((p) => (p.total === null ? "—" : String(p.total))),
+        ...(prevTerms.length > 0 ? [subj.cumulativeAvg === null ? "—" : String(subj.cumulativeAvg)] : []),
         `${subj.percentage}`,
         subj.grade,
         subj.remark,
@@ -174,7 +186,8 @@ export async function renderReportCard(data: ReportCardData, verifyUrl: string):
     .font("Helvetica")
     .fontSize(8.5)
     .text(
-      `Total: ${data.result.overallTotal} / ${data.result.overallMax}   Percentage: ${data.result.average}%`,
+      `Total: ${data.result.overallTotal} / ${data.result.overallMax}   Percentage: ${data.result.average}%` +
+        (data.result.cumulativeAverage !== null ? `   Session Average: ${data.result.cumulativeAverage}%` : ""),
       320,
       y + 13
     );
@@ -208,6 +221,24 @@ export async function renderReportCard(data: ReportCardData, verifyUrl: string):
   doc.moveTo(420, footY + 64).lineTo(556, footY + 64).stroke("#000");
   doc.fillColor("#000").fontSize(8).text("Head Teacher's Signature & Date", 420, footY + 68, { width: 136, align: "center" });
 
+  // Promotion stamp: average ≥ 50% → PROMOTED, below 50% → REPEAT
+  if (data.result.promotionDecision) {
+    const stamp = data.result.promotionDecision;
+    const color = stamp === "PROMOTED" ? "#15803d" : "#b91c1c";
+    doc.save();
+    doc.translate(468, footY - 26).rotate(-12);
+    doc.opacity(0.88);
+    doc.lineWidth(2.5).roundedRect(-76, -25, 152, 50, 6).stroke(color);
+    doc.lineWidth(1).roundedRect(-69, -19, 138, 38, 4).stroke(color);
+    doc
+      .fillColor(color)
+      .font("Helvetica-Bold")
+      .fontSize(stamp === "PROMOTED" ? 19 : 22)
+      .text(stamp, -69, stamp === "PROMOTED" ? -8 : -10, { width: 138, align: "center", characterSpacing: 1.5 });
+    doc.opacity(1);
+    doc.restore();
+  }
+
   doc
     .fillColor(GREY)
     .fontSize(6.5)
@@ -228,6 +259,9 @@ function abbreviate(name: string): string {
     "Second Test": "2nd Test",
     "Mid-Term Exam": "Mid-Term",
     "Final Exam": "Exam",
+    "First Term": "1st Term",
+    "Second Term": "2nd Term",
+    "Third Term": "3rd Term",
   };
   return map[name] ?? name;
 }

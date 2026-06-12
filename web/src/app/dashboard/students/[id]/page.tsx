@@ -46,8 +46,13 @@ interface ResultData {
     subjectId: string; subject: string;
     scores: { assessment: string; maxScore: number; score: number | null }[];
     total: number; maxTotal: number; percentage: number; grade: string; remark: string;
+    previousTerms: { term: string; total: number | null }[];
+    cumulativeAvg: number | null;
   }[];
   average: number; grade: string; remark: string; positionLabel: string | null; classSize: number;
+  previousTermNames: string[];
+  cumulativeAverage: number | null;
+  promotionDecision: "PROMOTED" | "REPEAT" | null;
 }
 
 interface FeeBalance {
@@ -224,6 +229,18 @@ export default function StudentDetailPage() {
                   <Card><CardContent className="p-5"><p className="text-xs uppercase text-muted-foreground">Grade</p><p className="text-2xl font-bold">{result.grade} <span className="text-sm font-normal text-muted-foreground">({result.remark})</span></p></CardContent></Card>
                   <Card><CardContent className="p-5"><p className="text-xs uppercase text-muted-foreground">Position</p><p className="text-2xl font-bold">{result.positionLabel ?? "—"} <span className="text-sm font-normal text-muted-foreground">of {result.classSize}</span></p></CardContent></Card>
                 </div>
+                {result.promotionDecision && (
+                  <div
+                    className={cn(
+                      "inline-block rotate-[-3deg] rounded-md border-4 border-double px-6 py-2 text-xl font-black tracking-widest",
+                      result.promotionDecision === "PROMOTED"
+                        ? "border-green-600 text-green-600"
+                        : "border-destructive text-destructive"
+                    )}
+                  >
+                    {result.promotionDecision}
+                  </div>
+                )}
                 <Table>
                   <THead>
                     <TR>
@@ -232,6 +249,10 @@ export default function StudentDetailPage() {
                         <TH key={s.assessment} className="text-center">{s.assessment} ({s.maxScore})</TH>
                       ))}
                       <TH className="text-center">Total</TH>
+                      {result.previousTermNames.map((t) => (
+                        <TH key={t} className="text-center">{t}</TH>
+                      ))}
+                      {result.previousTermNames.length > 0 && <TH className="text-center">Cum. Avg</TH>}
                       <TH className="text-center">Grade</TH>
                     </TR>
                   </THead>
@@ -243,6 +264,12 @@ export default function StudentDetailPage() {
                           <TD key={s.assessment} className="text-center">{s.score ?? "—"}</TD>
                         ))}
                         <TD className="text-center font-semibold">{subj.total}/{subj.maxTotal}</TD>
+                        {subj.previousTerms.map((p) => (
+                          <TD key={p.term} className="text-center text-muted-foreground">{p.total ?? "—"}</TD>
+                        ))}
+                        {result.previousTermNames.length > 0 && (
+                          <TD className="text-center font-medium">{subj.cumulativeAvg ?? "—"}</TD>
+                        )}
                         <TD className="text-center">{subj.grade}</TD>
                       </TR>
                     ))}
