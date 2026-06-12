@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,56 @@ export default function TeachersPage() {
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", phone: "", password: "", qualification: "", specialization: "",
   });
+  const [editTeacher, setEditTeacher] = useState<TeacherRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    firstName: "", lastName: "", email: "", phone: "", qualification: "", specialization: "",
+  });
+
+  function openEdit(t: TeacherRow) {
+    setEditTeacher(t);
+    setEditForm({
+      firstName: t.user.firstName,
+      lastName: t.user.lastName,
+      email: t.user.email,
+      phone: t.user.phone ?? "",
+      qualification: t.qualification ?? "",
+      specialization: t.specialization ?? "",
+    });
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTeacher) return;
+    setSaving(true);
+    try {
+      await api.put(`/teachers/${editTeacher.id}`, {
+        firstName: editForm.firstName,
+        lastName: editForm.lastName,
+        email: editForm.email,
+        phone: editForm.phone || undefined,
+        qualification: editForm.qualification || undefined,
+        specialization: editForm.specialization || undefined,
+      });
+      setEditTeacher(null);
+      setMessage({ type: "success", text: "Teacher updated." });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to update teacher" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeTeacher(t: TeacherRow) {
+    if (!confirm(`Remove ${t.user.firstName} ${t.user.lastName}? If they have recorded scores or attendance, their account will be deactivated instead.`)) return;
+    try {
+      const r = await api.delete<{ message: string }>(`/teachers/${t.id}`);
+      setMessage({ type: "success", text: r.message });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to remove teacher" });
+    }
+  }
 
   const load = useCallback(() => {
     api.get<ApiResponse<Paginated<TeacherRow>>>("/teachers?pageSize=50").then((r) => setData(r.data)).catch(() => null);
@@ -75,6 +125,7 @@ export default function TeachersPage() {
             <TH className="hidden md:table-cell">Contact</TH>
             <TH className="hidden lg:table-cell">Assignments</TH>
             <TH>Status</TH>
+            <TH></TH>
           </TR>
         </THead>
         <TBody>
@@ -103,13 +154,59 @@ export default function TeachersPage() {
               <TD>
                 <Badge variant={t.user.isActive ? "success" : "destructive"}>{t.user.isActive ? "Active" : "Disabled"}</Badge>
               </TD>
+              <TD className="text-right">
+                <div className="flex justify-end gap-1.5">
+                  <Button variant="outline" size="sm" onClick={() => openEdit(t)}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => removeTeacher(t)} aria-label="Remove teacher">
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                </div>
+              </TD>
             </TR>
           ))}
           {data && data.items.length === 0 && (
-            <TR><TD colSpan={5} className="py-8 text-center text-muted-foreground">No teachers yet.</TD></TR>
+            <TR><TD colSpan={6} className="py-8 text-center text-muted-foreground">No teachers yet.</TD></TR>
           )}
         </TBody>
       </Table>
+
+      <Dialog open={Boolean(editTeacher)} onClose={() => setEditTeacher(null)} title={`Edit teacher — ${editTeacher?.staffNo ?? ""}`}>
+        <form onSubmit={saveEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="efn">First name</Label>
+              <Input id="efn" required value={editForm.firstName} onChange={(e) => setEditForm((f) => ({ ...f, firstName: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="eln">Last name</Label>
+              <Input id="eln" required value={editForm.lastName} onChange={(e) => setEditForm((f) => ({ ...f, lastName: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="eem">Email (login)</Label>
+            <Input id="eem" type="email" required value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="eph">Phone</Label>
+              <Input id="eph" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="eq">Qualification</Label>
+              <Input id="eq" value={editForm.qualification} onChange={(e) => setEditForm((f) => ({ ...f, qualification: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="es">Specialization</Label>
+            <Input id="es" value={editForm.specialization} onChange={(e) => setEditForm((f) => ({ ...f, specialization: e.target.value }))} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Save changes
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Add teacher">
         <form onSubmit={addTeacher} className="space-y-4">

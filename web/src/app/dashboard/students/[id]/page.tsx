@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { Pencil } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
@@ -64,6 +64,7 @@ type Tab = "profile" | "attendance" | "results" | "fees";
 
 export default function StudentDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const user = getUser();
   const [student, setStudent] = useState<Student | null>(null);
   const [attendance, setAttendance] = useState<AttendanceData | null>(null);
@@ -88,6 +89,18 @@ export default function StudentDetailPage() {
     }
   }, [tab, id, attendance, result, fees]);
 
+  async function removeStudent() {
+    if (!student) return;
+    if (!confirm(`Remove ${fullName(student)} (${student.admissionNo})? If they have academic or payment records, they will be marked as WITHDRAWN instead of deleted.`)) return;
+    try {
+      const r = await api.delete<{ message: string }>(`/students/${student.id}`);
+      alert(r.message ?? "Student removed");
+      router.push("/dashboard/students");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove student");
+    }
+  }
+
   if (error) return <Alert variant="destructive">{error}</Alert>;
   if (!student) return <p className="text-muted-foreground">Loading…</p>;
 
@@ -103,11 +116,16 @@ export default function StudentDetailPage() {
       <PageHeader title={fullName(student)} description={`${student.admissionNo} · ${student.classRoom?.name ?? "No class"}`}>
         <Badge variant={student.status === "ACTIVE" ? "success" : "secondary"}>{student.status}</Badge>
         {user && ["SUPER_ADMIN", "ADMIN"].includes(user.role) && (
-          <Link href={`/dashboard/students/${student.id}/edit`}>
-            <Button variant="outline" size="sm">
-              <Pencil className="h-3.5 w-3.5" /> Edit
+          <>
+            <Link href={`/dashboard/students/${student.id}/edit`}>
+              <Button variant="outline" size="sm">
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </Button>
+            </Link>
+            <Button variant="outline" size="sm" onClick={removeStudent}>
+              <Trash2 className="h-3.5 w-3.5 text-destructive" /> Remove
             </Button>
-          </Link>
+          </>
         )}
       </PageHeader>
 

@@ -113,6 +113,72 @@ router.get(
   })
 );
 
+// PUT /parents/:id — update profile and account details
+router.put(
+  "/:id",
+  authorize(...ADMINS),
+  validate(
+    z.object({
+      body: z.object({
+        firstName: z.string().min(2).optional(),
+        lastName: z.string().min(2).optional(),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        occupation: z.string().optional(),
+        address: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }),
+    })
+  ),
+  asyncHandler(async (req, res) => {
+    const { firstName, lastName, email, phone, isActive, ...profile } = req.body;
+    const userFields = {
+      ...(firstName !== undefined ? { firstName } : {}),
+      ...(lastName !== undefined ? { lastName } : {}),
+      ...(email !== undefined ? { email: email.toLowerCase() } : {}),
+      ...(phone !== undefined ? { phone } : {}),
+      ...(isActive !== undefined ? { isActive } : {}),
+    };
+    const parent = await prisma.parent.update({
+      where: { id: req.params.id },
+      data: {
+        ...profile,
+        ...(Object.keys(userFields).length > 0 ? { user: { update: userFields } } : {}),
+      },
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true, phone: true, isActive: true } },
+      },
+    });
+    audit(req, "parent.update", "Parent", parent.id);
+    res.json({ success: true, data: parent });
+  })
+);
+
+// DELETE /parents/:id — unlinks children, then removes the account
+router.delete(
+  "/:id",
+  authorize(...ADMINS),
+  asyncHandler(async (req, res) => {
+    const parent = await prisma.parent.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { id: true } }, students: { select: { id: true } } },
+    });
+    if (!parent) throw ApiError.notFound("Parent not found");
+    await prisma.$transaction([
+      prisma.student.updateMany({ where: { parentId: parent.id }, data: { parentId: null } }),
+      prisma.user.delete({ where: { id: parent.user.id } }),
+    ]);
+    audit(req, "parent.delete", "Parent", req.params.id, { unlinkedChildren: parent.students.length });
+    res.json({
+      success: true,
+      message:
+        parent.students.length > 0
+          ? `Parent deleted. ${parent.students.length} student(s) are no longer linked to a parent.`
+          : "Parent deleted",
+    });
+  })
+);
+
 // POST /parents/:id/link — attach students to a parent
 router.post(
   "/:id/link",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Link2, Loader2, Plus, Search } from "lucide-react";
+import { KeyRound, Link2, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { PageHeader } from "@/components/page-header";
@@ -40,6 +40,56 @@ export default function ParentsPage() {
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", phone: "", password: "", occupation: "", address: "",
   });
+  const [editParent, setEditParent] = useState<ParentRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    firstName: "", lastName: "", email: "", phone: "", occupation: "", address: "",
+  });
+
+  function openEdit(p: ParentRow) {
+    setEditParent(p);
+    setEditForm({
+      firstName: p.user.firstName,
+      lastName: p.user.lastName,
+      email: p.user.email,
+      phone: p.user.phone ?? "",
+      occupation: p.occupation ?? "",
+      address: p.address ?? "",
+    });
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editParent) return;
+    setSaving(true);
+    try {
+      await api.put(`/parents/${editParent.id}`, {
+        firstName: editForm.firstName,
+        lastName: editForm.lastName,
+        email: editForm.email,
+        phone: editForm.phone || undefined,
+        occupation: editForm.occupation || undefined,
+        address: editForm.address || undefined,
+      });
+      setEditParent(null);
+      setMessage({ type: "success", text: "Parent updated." });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to update parent" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeParent(p: ParentRow) {
+    if (!confirm(`Remove ${p.user.firstName} ${p.user.lastName}? Their children will no longer be linked to a parent account.`)) return;
+    try {
+      const r = await api.delete<{ message: string }>(`/parents/${p.id}`);
+      setMessage({ type: "success", text: r.message });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to remove parent" });
+    }
+  }
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: "20" });
@@ -167,11 +217,17 @@ export default function ParentsPage() {
               {isAdmin && (
                 <TD className="text-right">
                   <div className="flex justify-end gap-1.5">
+                    <Button variant="outline" size="sm" onClick={() => openEdit(p)}>
+                      <Pencil className="h-3.5 w-3.5" /> Edit
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => setLinkParent(p)}>
                       <Link2 className="h-3.5 w-3.5" /> Link child
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => { setPwParent(p); setPwValue(""); }}>
                       <KeyRound className="h-3.5 w-3.5" /> Login details
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => removeParent(p)} aria-label="Remove parent">
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
                     </Button>
                   </div>
                 </TD>
@@ -193,6 +249,44 @@ export default function ParentsPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={Boolean(editParent)} onClose={() => setEditParent(null)} title={`Edit parent — ${editParent?.user.firstName ?? ""} ${editParent?.user.lastName ?? ""}`}>
+        <form onSubmit={saveEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="epfn">First name</Label>
+              <Input id="epfn" required value={editForm.firstName} onChange={(e) => setEditForm((f) => ({ ...f, firstName: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="epln">Last name</Label>
+              <Input id="epln" required value={editForm.lastName} onChange={(e) => setEditForm((f) => ({ ...f, lastName: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="epph">Phone number</Label>
+              <Input id="epph" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="epem">Email (login)</Label>
+              <Input id="epem" type="email" required value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="epocc">Occupation</Label>
+              <Input id="epocc" value={editForm.occupation} onChange={(e) => setEditForm((f) => ({ ...f, occupation: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="epaddr">Address</Label>
+              <Input id="epaddr" value={editForm.address} onChange={(e) => setEditForm((f) => ({ ...f, address: e.target.value }))} />
+            </div>
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Save changes
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="Add parent / guardian">
         <form onSubmit={addParent} className="space-y-4">
