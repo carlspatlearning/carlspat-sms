@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Contact, LayoutDashboard, Users, GraduationCap, BookOpen, School, CalendarCheck,
-  ClipboardList, FileText, Wallet, Receipt, Megaphone, MessageSquare,
+  ClipboardList, FileText, PenLine, Wallet, Receipt, Megaphone, MessageSquare,
   Settings, UserCog, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/subjects", label: "Subjects", icon: BookOpen, roles: ["SUPER_ADMIN", "ADMIN"] },
   { href: "/dashboard/attendance", label: "Attendance", icon: CalendarCheck, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER"] },
   { href: "/dashboard/results", label: "Results", icon: ClipboardList, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER"] },
+  { href: "/dashboard/comments", label: "Report Comments", icon: PenLine, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER"] },
   { href: "/dashboard/report-cards", label: "Report Cards", icon: FileText, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT"] },
   { href: "/dashboard/fees", label: "Fees", icon: Wallet, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT", "PARENT", "STUDENT"] },
   { href: "/dashboard/payments", label: "Payments", icon: Receipt, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT", "PARENT"] },

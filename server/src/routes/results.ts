@@ -153,6 +153,44 @@ router.get(
   })
 );
 
+// GET /results/comments?classRoomId=&termId= — comment sheet for a class
+router.get(
+  "/comments",
+  authorize(Role.TEACHER, ...ADMINS),
+  asyncHandler(async (req, res) => {
+    const { classRoomId, termId } = req.query as Record<string, string | undefined>;
+    if (!classRoomId) throw ApiError.badRequest("classRoomId is required");
+    const term = termId
+      ? await prisma.term.findUnique({ where: { id: termId } })
+      : await prisma.term.findFirst({ where: { isCurrent: true } });
+    if (!term) throw ApiError.badRequest("No term specified and no current term configured");
+
+    const [students, reports] = await Promise.all([
+      prisma.student.findMany({
+        where: { classRoomId, status: "ACTIVE" },
+        select: { id: true, firstName: true, lastName: true, admissionNo: true, passportUrl: true },
+        orderBy: { lastName: "asc" },
+      }),
+      prisma.termReport.findMany({
+        where: { termId: term.id, classRoomId },
+        select: { studentId: true, teacherComment: true, headTeacherComment: true },
+      }),
+    ]);
+    const byStudent = new Map(reports.map((r) => [r.studentId, r]));
+    res.json({
+      success: true,
+      data: {
+        termId: term.id,
+        rows: students.map((s) => ({
+          student: s,
+          teacherComment: byStudent.get(s.id)?.teacherComment ?? "",
+          headTeacherComment: byStudent.get(s.id)?.headTeacherComment ?? "",
+        })),
+      },
+    });
+  })
+);
+
 // PUT /results/comments — form teacher / head teacher comments on a term report
 router.put(
   "/comments",
