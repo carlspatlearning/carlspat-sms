@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { formatNaira } from "@/lib/utils";
@@ -60,6 +60,8 @@ function StaffFees() {
   const [debtors, setDebtors] = useState<{ debtors: Debtor[]; totalOutstanding: number } | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [discountDialog, setDiscountDialog] = useState(false);
+  const [editStructure, setEditStructure] = useState<Structure | null>(null);
+  const [editAmount, setEditAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [form, setForm] = useState({ classRoomId: "", categoryId: "", amount: "" });
   const [discountForm, setDiscountForm] = useState({ studentId: "", amount: "", reason: "" });
@@ -106,6 +108,42 @@ function StaffFees() {
       setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveEditStructure(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editStructure || !term) return;
+    setSaving(true);
+    try {
+      await api.post("/fees/structures", {
+        termId: term.id,
+        classRoomId: editStructure.classRoom.id,
+        categoryId: editStructure.category.id,
+        amount: Number(editAmount),
+      });
+      setEditStructure(null);
+      setMessage({ type: "success", text: "Fee updated." });
+      const r = await api.get<ApiResponse<Structure[]>>(`/fees/structures?termId=${term.id}`);
+      setStructures(r.data);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteStructure(id: string) {
+    if (!confirm("Remove this fee? Students will no longer be charged for it.")) return;
+    try {
+      await api.delete(`/fees/structures/${id}`);
+      setMessage({ type: "success", text: "Fee removed." });
+      if (term) {
+        const r = await api.get<ApiResponse<Structure[]>>(`/fees/structures?termId=${term.id}`);
+        setStructures(r.data);
+      }
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
     }
   }
 
@@ -164,17 +202,27 @@ function StaffFees() {
           <CardHeader><CardTitle>Fee Structure (current term)</CardTitle></CardHeader>
           <CardContent>
             <Table>
-              <THead><TR><TH>Class</TH><TH>Category</TH><TH className="text-right">Amount</TH></TR></THead>
+              <THead><TR><TH>Class</TH><TH>Category</TH><TH className="text-right">Amount</TH><TH></TH></TR></THead>
               <TBody>
                 {structures.map((s) => (
                   <TR key={s.id}>
                     <TD>{s.classRoom.name}</TD>
                     <TD>{s.category.name}</TD>
                     <TD className="text-right">{formatNaira(Number(s.amount))}</TD>
+                    <TD className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="outline" size="sm" onClick={() => { setEditStructure(s); setEditAmount(String(Number(s.amount))); }}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => deleteStructure(s.id)}>
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        </Button>
+                      </div>
+                    </TD>
                   </TR>
                 ))}
                 {structures.length === 0 && (
-                  <TR><TD colSpan={3} className="py-6 text-center text-muted-foreground">No fees configured for this term yet.</TD></TR>
+                  <TR><TD colSpan={4} className="py-6 text-center text-muted-foreground">No fees configured for this term yet.</TD></TR>
                 )}
               </TBody>
             </Table>
@@ -266,6 +314,20 @@ function StaffFees() {
           </div>
           <Button type="submit" className="w-full" disabled={saving}>
             {saving && <Loader2 className="h-4 w-4 animate-spin" />} Apply discount
+          </Button>
+        </form>
+      </Dialog>
+
+      <Dialog open={Boolean(editStructure)} onClose={() => setEditStructure(null)}
+        title={editStructure ? `Edit fee — ${editStructure.classRoom.name} / ${editStructure.category.name}` : "Edit fee"}>
+        <form onSubmit={saveEditStructure} className="space-y-4">
+          <div>
+            <Label htmlFor="eamt">Amount (₦)</Label>
+            <Input id="eamt" type="number" min="1" step="0.01" required value={editAmount}
+              onChange={(e) => setEditAmount(e.target.value)} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Save changes
           </Button>
         </form>
       </Dialog>
