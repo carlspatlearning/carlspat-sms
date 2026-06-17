@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { formatNaira } from "@/lib/utils";
@@ -23,6 +23,12 @@ interface Structure {
   category: Category;
   classRoom: { id: string; name: string };
   term: { id: string; name: string; session: { name: string } };
+}
+interface StudentOpt { id: string; firstName: string; lastName: string; admissionNo: string }
+interface Waiver {
+  id: string; amount: string; reason: string;
+  student: { firstName: string; lastName: string; admissionNo: string };
+  term: { name: string; session: { name: string } };
 }
 interface Debtor {
   student: {
@@ -53,8 +59,12 @@ function StaffFees() {
   const [structures, setStructures] = useState<Structure[]>([]);
   const [debtors, setDebtors] = useState<{ debtors: Debtor[]; totalOutstanding: number } | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [discountDialog, setDiscountDialog] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [form, setForm] = useState({ classRoomId: "", categoryId: "", amount: "" });
+  const [discountForm, setDiscountForm] = useState({ studentId: "", amount: "", reason: "" });
+  const [waivers, setWaivers] = useState<Waiver[]>([]);
+  const [students, setStudents] = useState<StudentOpt[]>([]);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
@@ -68,9 +78,13 @@ function StaffFees() {
     if (!term) return;
     api.get<ApiResponse<Structure[]>>(`/fees/structures?termId=${term.id}`).then((r) => setStructures(r.data)).catch(() => null);
     api.get<ApiResponse<{ debtors: Debtor[]; totalOutstanding: number }>>(`/fees/debtors?termId=${term.id}`)
-      .then((r) => setDebtors(r.data))
-      .catch(() => null);
+      .then((r) => setDebtors(r.data)).catch(() => null);
+    api.get<ApiResponse<Waiver[]>>(`/fees/waivers?termId=${term.id}`).then((r) => setWaivers(r.data)).catch(() => null);
   }, [term]);
+
+  useEffect(() => {
+    api.get<ApiResponse<{ items: StudentOpt[] }>>("/students?pageSize=200").then((r) => setStudents(r.data.items)).catch(() => null);
+  }, []);
 
   async function addStructure(e: React.FormEvent) {
     e.preventDefault();
@@ -95,9 +109,49 @@ function StaffFees() {
     }
   }
 
+  async function addDiscount(e: React.FormEvent) {
+    e.preventDefault();
+    if (!term) return;
+    setSaving(true);
+    try {
+      await api.post("/fees/waivers", {
+        studentId: discountForm.studentId,
+        termId: term.id,
+        amount: Number(discountForm.amount),
+        reason: discountForm.reason,
+      });
+      setDiscountDialog(false);
+      setDiscountForm({ studentId: "", amount: "", reason: "" });
+      setMessage({ type: "success", text: "Discount applied to student's fees." });
+      const r = await api.get<ApiResponse<Waiver[]>>(`/fees/waivers?termId=${term.id}`);
+      setWaivers(r.data);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeDiscount(id: string) {
+    if (!confirm("Remove this discount?")) return;
+    try {
+      await api.delete(`/fees/waivers/${id}`);
+      setMessage({ type: "success", text: "Discount removed." });
+      if (term) {
+        const r = await api.get<ApiResponse<Waiver[]>>(`/fees/waivers?termId=${term.id}`);
+        setWaivers(r.data);
+      }
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    }
+  }
+
   return (
     <div>
       <PageHeader title="Fee Management" description={term ? `${term.name}, ${term.session.name} session` : undefined}>
+        <Button variant="outline" onClick={() => setDiscountDialog(true)}>
+          <Plus className="h-4 w-4" /> Add Discount
+        </Button>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="h-4 w-4" /> Set Fee
         </Button>
@@ -159,6 +213,62 @@ function StaffFees() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Discounts / waivers */}
+      {waivers.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader><CardTitle>Discounts Applied (current term)</CardTitle></CardHeader>
+          <CardContent>
+            <Table>
+              <THead><TR><TH>Student</TH><TH>Reason</TH><TH className="text-right">Amount</TH><TH></TH></TR></THead>
+              <TBody>
+                {waivers.map((w) => (
+                  <TR key={w.id}>
+                    <TD>
+                      <span className="font-medium">{w.student.firstName} {w.student.lastName}</span>
+                      <span className="block text-xs text-muted-foreground">{w.student.admissionNo}</span>
+                    </TD>
+                    <TD className="text-sm">{w.reason}</TD>
+                    <TD className="text-right font-semibold text-green-600">-{formatNaira(Number(w.amount))}</TD>
+                    <TD>
+                      <Button variant="ghost" size="icon" onClick={() => removeDiscount(w.id)}>
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog open={discountDialog} onClose={() => setDiscountDialog(false)} title="Add student discount">
+        <form onSubmit={addDiscount} className="space-y-4">
+          <p className="text-xs text-muted-foreground">A discount reduces the student&apos;s fee balance for the current term.</p>
+          <div>
+            <Label htmlFor="dstudent">Student</Label>
+            <Select id="dstudent" required value={discountForm.studentId}
+              onChange={(e) => setDiscountForm((f) => ({ ...f, studentId: e.target.value }))}>
+              <option value="">— Select student —</option>
+              {students.map((s) => <option key={s.id} value={s.id}>{s.firstName} {s.lastName} ({s.admissionNo})</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="damt">Discount amount (₦)</Label>
+            <Input id="damt" type="number" min="1" step="0.01" required value={discountForm.amount}
+              onChange={(e) => setDiscountForm((f) => ({ ...f, amount: e.target.value }))} />
+          </div>
+          <div>
+            <Label htmlFor="dreason">Reason</Label>
+            <Input id="dreason" required placeholder="e.g. Staff child, scholarship, bursary" value={discountForm.reason}
+              onChange={(e) => setDiscountForm((f) => ({ ...f, reason: e.target.value }))} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Apply discount
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Set fee for a class">
         <form onSubmit={addStructure} className="space-y-4">

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { Role } from "@prisma/client";
+
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
@@ -129,6 +130,47 @@ router.get(
         `attachment; filename="report-card-${data.student.admissionNo.replace(/\//g, "-")}-${data.term.replace(/\s/g, "-")}.pdf"`
       )
       .send(pdf);
+  })
+);
+
+// GET /report-cards/class/:classRoomId/pdf?termId= — bulk PDF (all students in class, staff only)
+router.get(
+  "/class/:classRoomId/pdf",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    if (!(STAFF as Role[]).includes(req.auth!.role)) throw ApiError.forbidden("Staff only");
+    const termId = String(req.query.termId ?? "");
+    if (!termId) throw ApiError.badRequest("termId is required");
+
+    const students = await prisma.student.findMany({
+      where: { classRoomId: req.params.classRoomId, status: "ACTIVE" },
+      orderBy: { lastName: "asc" },
+    });
+    if (students.length === 0) throw ApiError.notFound("No active students in this class");
+
+    const PDFMerger = (await import("pdf-merger-js")).default;
+    const merger = new PDFMerger();
+
+    for (const student of students) {
+      try {
+        const data = await buildReportData(student.id, termId);
+        const sig = reportSignature(student.id, termId);
+        const verifyUrl = `${env.corsOrigins[0]}/verify-report?sid=${student.id}&tid=${termId}&sig=${sig}`;
+        const pdf = await renderReportCard(data, verifyUrl);
+        await merger.add(pdf);
+      } catch {
+        // Skip students with no results recorded
+      }
+    }
+
+    const merged = await merger.saveAsBuffer();
+    const cls = await prisma.classRoom.findUnique({ where: { id: req.params.classRoomId }, select: { name: true } });
+    const term = await prisma.term.findUnique({ where: { id: termId }, select: { name: true } });
+    audit(req, "report_card.class_download", "ClassRoom", req.params.classRoomId, { termId });
+    res
+      .setHeader("Content-Type", "application/pdf")
+      .setHeader("Content-Disposition", `attachment; filename="report-cards-${(cls?.name ?? "class").replace(/\s/g, "-")}-${(term?.name ?? "term").replace(/\s/g, "-")}.pdf"`)
+      .send(merged);
   })
 );
 

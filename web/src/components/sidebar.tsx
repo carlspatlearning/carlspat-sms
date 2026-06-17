@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Contact, LayoutDashboard, Users, GraduationCap, BookOpen, School, CalendarCheck,
   ClipboardList, FileText, PenLine, Wallet, Receipt, Megaphone, MessageSquare,
-  Settings, UserCog, X,
+  Settings, UserCog, X, TrendingDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth";
@@ -30,6 +30,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/report-cards", label: "Report Cards", icon: FileText, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT"] },
   { href: "/dashboard/fees", label: "Fees", icon: Wallet, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT", "PARENT", "STUDENT"] },
   { href: "/dashboard/payments", label: "Payments", icon: Receipt, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT", "PARENT"] },
+  { href: "/dashboard/expenditures", label: "Expenditures", icon: TrendingDown, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT"] },
   { href: "/dashboard/announcements", label: "Announcements", icon: Megaphone, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT", "ACCOUNTANT"] },
   { href: "/dashboard/messages", label: "Messages", icon: MessageSquare, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT", "ACCOUNTANT"] },
   { href: "/dashboard/users", label: "User Accounts", icon: UserCog, roles: ["SUPER_ADMIN", "ADMIN"] },

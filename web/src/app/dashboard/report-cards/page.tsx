@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 
+interface ClassOption { id: string; name: string; section: string | null }
+
 interface Term { id: string; name: string; session?: { name: string } }
 interface SessionRow { id: string; name: string; terms: Term[] }
 interface StudentOption { id: string; label: string }
@@ -21,12 +23,16 @@ export default function ReportCardsPage() {
   const user = getUser();
   const [students, setStudents] = useState<StudentOption[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [classes, setClasses] = useState<ClassOption[]>([]);
   const [studentId, setStudentId] = useState("");
   const [termId, setTermId] = useState("");
+  const [classId, setClassId] = useState("");
   const [access, setAccess] = useState<Access | null>(null);
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [bulkDownloading, setBulkDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isStaff = user && ["SUPER_ADMIN", "ADMIN", "TEACHER"].includes(user.role);
 
   // Populate the student picker according to role
   useEffect(() => {
@@ -63,6 +69,7 @@ export default function ReportCardsPage() {
       const current = r.data.flatMap((s) => s.terms).find((t) => (t as Term & { isCurrent?: boolean }).isCurrent);
       if (current) setTermId(current.id);
     }).catch(() => null);
+    api.get<ApiResponse<ClassOption[]>>("/classes").then((r) => setClasses(r.data)).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -91,6 +98,23 @@ export default function ReportCardsPage() {
     }
   }
 
+  async function downloadClassAll() {
+    if (!classId || !termId) return;
+    setBulkDownloading(true);
+    setError(null);
+    try {
+      const cls = classes.find((c) => c.id === classId);
+      await api.download(
+        `/report-cards/class/${classId}/pdf?termId=${termId}`,
+        `report-cards-${cls?.name ?? "class"}.pdf`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bulk download failed");
+    } finally {
+      setBulkDownloading(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader
@@ -98,6 +122,33 @@ export default function ReportCardsPage() {
         description="Download or print the official end-of-term report card (PDF, with QR verification)."
       />
       {error && <Alert variant="destructive" className="mb-4">{error}</Alert>}
+
+      {isStaff && (
+        <Card className="mb-6">
+          <CardContent className="p-5">
+            <p className="mb-3 text-sm font-semibold">Download All — Entire Class at Once</p>
+            <div className="flex flex-wrap gap-3">
+              <div className="flex-1 min-w-36">
+                <Label htmlFor="bulkclass">Class</Label>
+                <Select id="bulkclass" value={classId} onChange={(e) => setClassId(e.target.value)}>
+                  <option value="">— Select class —</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.section ? ` ${c.section}` : ""}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex-1 min-w-36">
+                <Label>Term</Label>
+                <p className="text-sm mt-1 text-muted-foreground">(uses term selected below)</p>
+              </div>
+            </div>
+            <Button className="mt-3" onClick={downloadClassAll} disabled={!classId || !termId || bulkDownloading}>
+              {bulkDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Download All Report Cards (PDF)
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="space-y-4 p-5">

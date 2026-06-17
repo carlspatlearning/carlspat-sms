@@ -98,6 +98,26 @@ router.delete(
 
 // ── Waivers / discounts ──────────────────────────────────────────────────────
 
+router.get(
+  "/waivers",
+  authorize(...ADMINS),
+  asyncHandler(async (req, res) => {
+    const { studentId, termId } = req.query as Record<string, string | undefined>;
+    const waivers = await prisma.feeWaiver.findMany({
+      where: {
+        ...(studentId ? { studentId } : {}),
+        ...(termId ? { termId } : {}),
+      },
+      include: {
+        student: { select: { firstName: true, lastName: true, admissionNo: true } },
+        term: { include: { session: { select: { name: true } } } },
+      },
+      orderBy: { id: "desc" },
+    });
+    res.json({ success: true, data: waivers });
+  })
+);
+
 router.post(
   "/waivers",
   authorize(...ADMINS),
@@ -115,6 +135,16 @@ router.post(
     const waiver = await prisma.feeWaiver.create({ data: req.body });
     audit(req, "fees.waiver_create", "FeeWaiver", waiver.id, { amount: req.body.amount });
     res.status(201).json({ success: true, data: waiver });
+  })
+);
+
+router.delete(
+  "/waivers/:id",
+  authorize(...ADMINS),
+  asyncHandler(async (req, res) => {
+    await prisma.feeWaiver.delete({ where: { id: req.params.id } });
+    audit(req, "fees.waiver_delete", "FeeWaiver", req.params.id);
+    res.json({ success: true, message: "Discount removed" });
   })
 );
 

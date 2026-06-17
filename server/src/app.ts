@@ -23,6 +23,7 @@ import messageRoutes from "./routes/messages";
 import dashboardRoutes from "./routes/dashboard";
 import uploadRoutes from "./routes/uploads";
 import userRoutes from "./routes/users";
+import expenseRoutes from "./routes/expenses";
 
 export function createApp() {
   const app = express();
@@ -89,6 +90,7 @@ export function createApp() {
   app.use("/api/v1/dashboard", dashboardRoutes);
   app.use("/api/v1/uploads", uploadRoutes);
   app.use("/api/v1/users", userRoutes);
+  app.use("/api/v1/expenses", expenseRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
