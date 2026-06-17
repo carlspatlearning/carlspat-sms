@@ -156,11 +156,10 @@ export default function ClassesPage() {
                     <Button variant="outline" size="sm" onClick={() => openEdit(c)}>
                       <Pencil className="h-3.5 w-3.5" /> Edit
                     </Button>
-                    <Button variant="outline" size="sm" asChild>
-                      <Link href={`/dashboard/classes/${c.id}`}>
-                        <Users className="h-3.5 w-3.5" /> Manage
-                      </Link>
-                    </Button>
+                    <Link href={`/dashboard/classes/${c.id}`}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary">
+                      <Users className="h-3.5 w-3.5" /> Manage
+                    </Link>
                     <Button variant="outline" size="sm" onClick={() => deleteClass(c)}>
                       <Trash2 className="h-3.5 w-3.5 text-destructive" />
                     </Button>
