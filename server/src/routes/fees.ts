@@ -124,7 +124,7 @@ router.delete(
 
 router.get(
   "/waivers",
-  authorize(...ADMINS),
+  authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
     const { studentId, termId } = req.query as Record<string, string | undefined>;
     const waivers = await prisma.feeWaiver.findMany({
@@ -144,7 +144,7 @@ router.get(
 
 router.post(
   "/waivers",
-  authorize(...ADMINS),
+  authorize(...FEE_MANAGERS),
   validate(
     z.object({
       body: z.object({
@@ -164,7 +164,7 @@ router.post(
 
 router.delete(
   "/waivers/:id",
-  authorize(...ADMINS),
+  authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
     await prisma.feeWaiver.delete({ where: { id: req.params.id } });
     audit(req, "fees.waiver_delete", "FeeWaiver", req.params.id);
