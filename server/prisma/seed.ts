@@ -3,7 +3,7 @@
  * Idempotent — safe to run multiple times (uses upserts / find-or-create).
  */
 import "dotenv/config";
-import { PrismaClient, Role, Gender, AttendanceStatus, PaymentMethod } from "@prisma/client";
+import { PrismaClient, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -54,8 +54,6 @@ async function main() {
       create: { sessionId: session.id, ...t },
     });
   }
-  const currentTerm = terms["Third Term"];
-
   // ── Assessment structure (admin-editable) ────────────────────────────────
   const assessmentDefs = [
     { name: "CA 1", maxScore: 20, order: 1, isExam: false },
@@ -131,7 +129,7 @@ async function main() {
 
   await upsertUser("superadmin@carlspat.sch.ng", Role.SUPER_ADMIN, "System", "Owner", "SuperAdmin#1");
   await upsertUser("admin@carlspat.sch.ng", Role.ADMIN, "Adebola", "Ogunleye", "Admin#12345", "08067281676");
-  const bursarUser = await upsertUser("bursar@carlspat.sch.ng", Role.ACCOUNTANT, "Funmi", "Adeyemi", "Bursar#1234");
+  await upsertUser("bursar@carlspat.sch.ng", Role.ACCOUNTANT, "Funmi", "Adeyemi", "Bursar#1234");
 
   // Teacher + profile, assigned as form teacher of Primary 5
   const teacherUser = await upsertUser("teacher@carlspat.sch.ng", Role.TEACHER, "Tunde", "Bakare", "Teacher#123");
@@ -163,52 +161,6 @@ async function main() {
       update: { teacherId: teacher2.id },
       create: { classRoomId: classes["Primary 5"].id, subjectId: subjects[code].id, teacherId: teacher2.id },
     });
-  }
-
-  // Parent + profile
-  const parentUser = await upsertUser("parent@carlspat.sch.ng", Role.PARENT, "Olu", "Fashola", "Parent#1234", "08030000001");
-  const parent = await prisma.parent.upsert({
-    where: { userId: parentUser.id },
-    update: {},
-    create: { userId: parentUser.id, occupation: "Trader", address: "Ido Ekiti, Ekiti State" },
-  });
-
-  // ── Students ─────────────────────────────────────────────────────────────
-  const year = new Date().getFullYear();
-  const mkAdmissionNo = (n: number) => `CPS/${year}/${String(n).padStart(4, "0")}`;
-
-  const studentUser = await upsertUser("student@carlspat.sch.ng", Role.STUDENT, "Kemi", "Fashola", "Student#123");
-  const studentDefs = [
-    { first: "Kemi", last: "Fashola", gender: Gender.FEMALE, userId: studentUser.id, parentId: parent.id },
-    { first: "Seun", last: "Fashola", gender: Gender.MALE, userId: null, parentId: parent.id },
-    { first: "Bisi", last: "Adewale", gender: Gender.FEMALE, userId: null, parentId: null },
-    { first: "Emeka", last: "Nwosu", gender: Gender.MALE, userId: null, parentId: null },
-    { first: "Aisha", last: "Bello", gender: Gender.FEMALE, userId: null, parentId: null },
-  ];
-  const students: { id: string }[] = [];
-  for (let i = 0; i < studentDefs.length; i++) {
-    const s = studentDefs[i];
-    const admissionNo = mkAdmissionNo(i + 1);
-    const existing = await prisma.student.findUnique({ where: { admissionNo } });
-    students.push(
-      existing ??
-        (await prisma.student.create({
-          data: {
-            schoolId,
-            admissionNo,
-            firstName: s.first,
-            lastName: s.last,
-            gender: s.gender,
-            dateOfBirth: new Date("2015-03-12"),
-            userId: s.userId,
-            parentId: s.parentId,
-            classRoomId: classes["Primary 5"].id,
-            bloodGroup: "O+",
-            genotype: "AA",
-            address: "Ido Ekiti, Ekiti State",
-          },
-        }))
-    );
   }
 
   // ── Fee categories & structure (Primary 5, Third Term) ───────────────────
@@ -243,99 +195,6 @@ async function main() {
         },
       });
     }
-  }
-
-  // ── Payments: Kemi fully paid (report card unlocked), Seun part-paid ──────
-  const existingPayments = await prisma.payment.count();
-  if (existingPayments === 0) {
-    await prisma.payment.create({
-      data: {
-        receiptNo: `CPS-RCP-${year}-00001`,
-        studentId: students[0].id,
-        termId: currentTerm.id,
-        amount: 55000, // Tuition 45000 + PTA 2000 + Exam 3000 + Levy 5000
-        method: PaymentMethod.BANK_TRANSFER,
-        recordedById: bursarUser.id,
-        notes: "Third term fees — full payment",
-      },
-    });
-    await prisma.payment.create({
-      data: {
-        receiptNo: `CPS-RCP-${year}-00002`,
-        studentId: students[1].id,
-        termId: currentTerm.id,
-        amount: 30000,
-        method: PaymentMethod.CASH,
-        recordedById: bursarUser.id,
-        notes: "Third term fees — part payment",
-      },
-    });
-  }
-
-  // ── Sample scores for all three terms (so cumulative columns show) ───────
-  const scoreCount = await prisma.score.count();
-  if (scoreCount === 0) {
-    const rand = (max: number) => Math.round(max * (0.5 + Math.random() * 0.5));
-    const subjectCodes = ["ENG", "MTH", "BSC", "SOS", "CMP", "CRS"];
-    for (const termName of Object.keys(terms)) {
-      for (const st of students) {
-        for (const code of subjectCodes) {
-          for (const a of Object.keys(assessments)) {
-            await prisma.score.create({
-              data: {
-                studentId: st.id,
-                subjectId: subjects[code].id,
-                termId: terms[termName].id,
-                assessmentTypeId: assessments[a].id,
-                score: rand(assessments[a].maxScore),
-                recordedById: teacherUser.id,
-              },
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // ── Sample attendance (last 10 weekdays) ─────────────────────────────────
-  const attCount = await prisma.attendance.count();
-  if (attCount === 0) {
-    const days: Date[] = [];
-    const d = new Date();
-    while (days.length < 10) {
-      d.setDate(d.getDate() - 1);
-      if (d.getDay() !== 0 && d.getDay() !== 6) days.push(new Date(d));
-    }
-    for (const st of students) {
-      for (const day of days) {
-        const roll = Math.random();
-        await prisma.attendance.create({
-          data: {
-            studentId: st.id,
-            classRoomId: classes["Primary 5"].id,
-            termId: currentTerm.id,
-            date: day,
-            status: roll > 0.15 ? AttendanceStatus.PRESENT : roll > 0.05 ? AttendanceStatus.LATE : AttendanceStatus.ABSENT,
-            markedById: teacherUser.id,
-          },
-        });
-      }
-    }
-  }
-
-  // ── Welcome announcement ──────────────────────────────────────────────────
-  const annCount = await prisma.announcement.count();
-  if (annCount === 0) {
-    const admin = await prisma.user.findUnique({ where: { email: "admin@carlspat.sch.ng" } });
-    await prisma.announcement.create({
-      data: {
-        schoolId,
-        title: "Welcome to the Third Term, 2025/2026 Session",
-        body: "Resumption was Monday 27th April 2026. Mid-term break holds in week 7. Please ensure all outstanding fees are settled before examinations begin.",
-        audience: "ALL",
-        createdById: admin!.id,
-      },
-    });
   }
 
   console.log("✔ Seed completed for", school.name);
