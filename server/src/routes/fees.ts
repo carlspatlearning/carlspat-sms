@@ -37,6 +37,30 @@ router.post(
   })
 );
 
+router.put(
+  "/categories/:id",
+  authorize(...FEE_MANAGERS),
+  validate(z.object({ body: z.object({ name: z.string().min(2), description: z.string().optional() }) })),
+  asyncHandler(async (req, res) => {
+    const category = await prisma.feeCategory.update({
+      where: { id: req.params.id },
+      data: req.body,
+    });
+    audit(req, "fees.category_update", "FeeCategory", category.id);
+    res.json({ success: true, data: category });
+  })
+);
+
+router.delete(
+  "/categories/:id",
+  authorize(...FEE_MANAGERS),
+  asyncHandler(async (req, res) => {
+    await prisma.feeCategory.delete({ where: { id: req.params.id } });
+    audit(req, "fees.category_delete", "FeeCategory", req.params.id);
+    res.json({ success: true, message: "Category deleted" });
+  })
+);
+
 // ── Fee structures (amount per class × term × category) ─────────────────────
 
 router.get(

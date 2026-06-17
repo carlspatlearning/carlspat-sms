@@ -17,7 +17,7 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 
 interface Term { id: string; name: string; isCurrent?: boolean; session: { name: string } }
 interface ClassRoom { id: string; name: string }
-interface Category { id: string; name: string }
+interface Category { id: string; name: string; description?: string }
 interface Structure {
   id: string; amount: string;
   category: Category;
@@ -60,6 +60,9 @@ function StaffFees() {
   const [debtors, setDebtors] = useState<{ debtors: Debtor[]; totalOutstanding: number } | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [discountDialog, setDiscountDialog] = useState(false);
+  const [categoryDialog, setCategoryDialog] = useState(false);
+  const [editCategory, setEditCategory] = useState<Category | null>(null);
+  const [categoryForm, setCategoryForm] = useState({ name: "", description: "" });
   const [editStructure, setEditStructure] = useState<Structure | null>(null);
   const [editAmount, setEditAmount] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
@@ -184,11 +187,49 @@ function StaffFees() {
     }
   }
 
+  async function saveCategory(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (editCategory) {
+        await api.put(`/fees/categories/${editCategory.id}`, categoryForm);
+        setMessage({ type: "success", text: "Category updated." });
+      } else {
+        await api.post("/fees/categories", categoryForm);
+        setMessage({ type: "success", text: "Category added." });
+      }
+      setCategoryDialog(false);
+      setEditCategory(null);
+      setCategoryForm({ name: "", description: "" });
+      const r = await api.get<ApiResponse<Category[]>>("/fees/categories");
+      setCategories(r.data);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteCategory(cat: Category) {
+    if (!confirm(`Delete category "${cat.name}"? Any fee structures using it will also be removed.`)) return;
+    try {
+      await api.delete(`/fees/categories/${cat.id}`);
+      setMessage({ type: "success", text: "Category deleted." });
+      const r = await api.get<ApiResponse<Category[]>>("/fees/categories");
+      setCategories(r.data);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    }
+  }
+
   return (
     <div>
       <PageHeader title="Fee Management" description={term ? `${term.name}, ${term.session.name} session` : undefined}>
         <Button variant="outline" onClick={() => setDiscountDialog(true)}>
           <Plus className="h-4 w-4" /> Add Discount
+        </Button>
+        <Button variant="outline" onClick={() => { setEditCategory(null); setCategoryForm({ name: "", description: "" }); setCategoryDialog(true); }}>
+          <Plus className="h-4 w-4" /> Add Category
         </Button>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="h-4 w-4" /> Set Fee
@@ -262,6 +303,37 @@ function StaffFees() {
         </Card>
       </div>
 
+      {/* Fee categories */}
+      <Card className="mt-6">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle>Fee Categories</CardTitle>
+          <Button size="sm" variant="outline" onClick={() => { setEditCategory(null); setCategoryForm({ name: "", description: "" }); setCategoryDialog(true); }}>
+            <Plus className="h-3.5 w-3.5" /> Add
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {categories.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">No categories yet. Add one above.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {categories.map((cat) => (
+                <div key={cat.id} className="flex items-center gap-1 rounded-full border bg-secondary px-3 py-1 text-sm">
+                  <span className="font-medium">{cat.name}</span>
+                  <button onClick={() => { setEditCategory(cat); setCategoryForm({ name: cat.name, description: cat.description ?? "" }); setCategoryDialog(true); }}
+                    className="ml-1 rounded p-0.5 hover:bg-muted" title="Edit">
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button onClick={() => deleteCategory(cat)}
+                    className="rounded p-0.5 hover:bg-muted" title="Delete">
+                    <Trash2 className="h-3 w-3 text-destructive" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Discounts / waivers */}
       {waivers.length > 0 && (
         <Card className="mt-6">
@@ -290,6 +362,26 @@ function StaffFees() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={categoryDialog} onClose={() => setCategoryDialog(false)}
+        title={editCategory ? `Edit category — ${editCategory.name}` : "Add fee category"}>
+        <form onSubmit={saveCategory} className="space-y-4">
+          <div>
+            <Label htmlFor="catname">Category name</Label>
+            <Input id="catname" required placeholder="e.g. Tuition, PTA Levy, Uniform" value={categoryForm.name}
+              onChange={(e) => setCategoryForm((f) => ({ ...f, name: e.target.value }))} />
+          </div>
+          <div>
+            <Label htmlFor="catdesc">Description (optional)</Label>
+            <Input id="catdesc" placeholder="Short note about this fee type" value={categoryForm.description}
+              onChange={(e) => setCategoryForm((f) => ({ ...f, description: e.target.value }))} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            {editCategory ? "Save changes" : "Add category"}
+          </Button>
+        </form>
+      </Dialog>
 
       <Dialog open={discountDialog} onClose={() => setDiscountDialog(false)} title="Add student discount">
         <form onSubmit={addDiscount} className="space-y-4">
