@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
+import { getUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,10 @@ import { Alert } from "@/components/ui/alert";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 
 interface ClassRoom { id: string; name: string }
+interface TeacherAssignment {
+  formClasses: { id: string; name: string }[];
+  classSubjects: { classRoomId: string; classRoom: { id: string; name: string } }[];
+}
 interface RegisterRow {
   id: string;
   firstName: string;
@@ -28,6 +33,9 @@ const STATUSES = [
 ] as const;
 
 export default function AttendancePage() {
+  const user = getUser();
+  const isTeacher = user?.role === "TEACHER";
+
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [classRoomId, setClassRoomId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -37,11 +45,23 @@ export default function AttendancePage() {
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
 
   useEffect(() => {
-    api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => {
-      setClasses(r.data);
-      if (r.data.length > 0) setClassRoomId((prev) => prev || r.data[0].id);
-    }).catch(() => null);
-  }, []);
+    if (isTeacher) {
+      api.get<ApiResponse<TeacherAssignment>>("/teachers/me/classes").then((r) => {
+        const assignment = r.data;
+        const classMap = new Map<string, ClassRoom>();
+        assignment.formClasses.forEach((c) => classMap.set(c.id, c));
+        assignment.classSubjects.forEach((cs) => classMap.set(cs.classRoom.id, cs.classRoom));
+        const classList = [...classMap.values()];
+        setClasses(classList);
+        if (classList.length) setClassRoomId((prev) => prev || classList[0].id);
+      }).catch(() => null);
+    } else {
+      api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => {
+        setClasses(r.data);
+        if (r.data.length > 0) setClassRoomId((prev) => prev || r.data[0].id);
+      }).catch(() => null);
+    }
+  }, [isTeacher]);
 
   const loadRegister = useCallback(() => {
     if (!classRoomId || !date) return;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
+import { getUser } from "@/lib/auth";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,10 +20,18 @@ interface SheetRow {
   student: { id: string; firstName: string; lastName: string; admissionNo: string };
   scores: { assessmentTypeId: string; score: number | null }[];
 }
+interface TeacherAssignment {
+  formClasses: { id: string; name: string }[];
+  classSubjects: { classRoomId: string; subjectId: string; classRoom: { id: string; name: string }; subject: { id: string; name: string } }[];
+}
 
 export default function ResultsPage() {
+  const user = getUser();
+  const isTeacher = user?.role === "TEACHER";
+
   const [classes, setClasses] = useState<ClassRoom[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
+  const [teacherAssignment, setTeacherAssignment] = useState<TeacherAssignment | null>(null);
   const [term, setTerm] = useState<Term | null>(null);
   const [classRoomId, setClassRoomId] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -33,16 +42,47 @@ export default function ResultsPage() {
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
 
   useEffect(() => {
-    api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => {
-      setClasses(r.data);
-      if (r.data.length) setClassRoomId((p) => p || r.data[0].id);
-    }).catch(() => null);
-    api.get<ApiResponse<Subject[]>>("/subjects").then((r) => {
-      setSubjects(r.data);
-      if (r.data.length) setSubjectId((p) => p || r.data[0].id);
-    }).catch(() => null);
     api.get<ApiResponse<Term>>("/settings/current-term").then((r) => setTerm(r.data)).catch(() => null);
-  }, []);
+
+    if (isTeacher) {
+      api.get<ApiResponse<TeacherAssignment>>("/teachers/me/classes").then((r) => {
+        const assignment = r.data;
+        setTeacherAssignment(assignment);
+        // Build unique class list from form classes + teaching classes
+        const classMap = new Map<string, ClassRoom>();
+        assignment.formClasses.forEach((c) => classMap.set(c.id, c));
+        assignment.classSubjects.forEach((cs) => classMap.set(cs.classRoom.id, cs.classRoom));
+        const classList = [...classMap.values()];
+        setClasses(classList);
+        if (classList.length) setClassRoomId((p) => p || classList[0].id);
+      }).catch(() => null);
+    } else {
+      api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => {
+        setClasses(r.data);
+        if (r.data.length) setClassRoomId((p) => p || r.data[0].id);
+      }).catch(() => null);
+      api.get<ApiResponse<Subject[]>>("/subjects").then((r) => {
+        setAllSubjects(r.data);
+        if (r.data.length) setSubjectId((p) => p || r.data[0].id);
+      }).catch(() => null);
+    }
+  }, [isTeacher]);
+
+  // When class changes, update available subjects
+  useEffect(() => {
+    if (!classRoomId) return;
+    if (isTeacher && teacherAssignment) {
+      const subs = teacherAssignment.classSubjects
+        .filter((cs) => cs.classRoomId === classRoomId)
+        .map((cs) => cs.subject);
+      if (subs.length) setSubjectId((p) => (subs.find((s) => s.id === p) ? p : subs[0].id));
+      // allSubjects not needed for teachers — subjects derived from assignment
+    }
+  }, [classRoomId, isTeacher, teacherAssignment]);
+
+  const availableSubjects: Subject[] = isTeacher && teacherAssignment
+    ? teacherAssignment.classSubjects.filter((cs) => cs.classRoomId === classRoomId).map((cs) => cs.subject)
+    : allSubjects;
 
   const loadSheet = useCallback(() => {
     if (!classRoomId || !subjectId || !term) return;
@@ -120,7 +160,7 @@ export default function ResultsPage() {
         <div>
           <Label htmlFor="subject">Subject</Label>
           <Select id="subject" value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-            {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {availableSubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
         </div>
       </div>
@@ -129,6 +169,8 @@ export default function ResultsPage() {
 
       {loading ? (
         <p className="text-muted-foreground">Loading score sheet…</p>
+      ) : availableSubjects.length === 0 && isTeacher ? (
+        <p className="text-muted-foreground">You have no subjects assigned for this class.</p>
       ) : (
         <Table>
           <THead>

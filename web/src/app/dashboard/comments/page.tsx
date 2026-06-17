@@ -14,6 +14,10 @@ import { Card, CardContent } from "@/components/ui/card";
 
 interface ClassRoom { id: string; name: string }
 interface Term { id: string; name: string; session: { name: string } }
+interface TeacherAssignment {
+  formClasses: { id: string; name: string }[];
+  classSubjects: { classRoomId: string; classRoom: { id: string; name: string } }[];
+}
 interface CommentRow {
   student: { id: string; firstName: string; lastName: string; admissionNo: string; passportUrl: string | null };
   teacherComment: string;
@@ -31,6 +35,8 @@ const SUGGESTIONS = [
 export default function CommentsPage() {
   const user = getUser();
   const isAdmin = user && ["SUPER_ADMIN", "ADMIN"].includes(user.role);
+  const isTeacher = user?.role === "TEACHER";
+
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [classRoomId, setClassRoomId] = useState("");
   const [term, setTerm] = useState<Term | null>(null);
@@ -40,12 +46,24 @@ export default function CommentsPage() {
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
 
   useEffect(() => {
-    api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => {
-      setClasses(r.data);
-      if (r.data.length) setClassRoomId((p) => p || r.data[0].id);
-    }).catch(() => null);
     api.get<ApiResponse<Term>>("/settings/current-term").then((r) => setTerm(r.data)).catch(() => null);
-  }, []);
+    if (isTeacher) {
+      api.get<ApiResponse<TeacherAssignment>>("/teachers/me/classes").then((r) => {
+        const assignment = r.data;
+        const classMap = new Map<string, ClassRoom>();
+        assignment.formClasses.forEach((c) => classMap.set(c.id, c));
+        assignment.classSubjects.forEach((cs) => classMap.set(cs.classRoom.id, cs.classRoom));
+        const classList = [...classMap.values()];
+        setClasses(classList);
+        if (classList.length) setClassRoomId((p) => p || classList[0].id);
+      }).catch(() => null);
+    } else {
+      api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => {
+        setClasses(r.data);
+        if (r.data.length) setClassRoomId((p) => p || r.data[0].id);
+      }).catch(() => null);
+    }
+  }, [isTeacher]);
 
   const load = useCallback(() => {
     if (!classRoomId || !term) return;

@@ -86,6 +86,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const { classRoomId, subjectId, termId } = req.query as Record<string, string>;
     if (!classRoomId || !subjectId || !termId) throw ApiError.badRequest("classRoomId, subjectId and termId are required");
+    if (req.auth!.role === Role.TEACHER) await assertTeacherTeaches(req.auth!.sub, classRoomId, subjectId);
 
     const [students, scores, assessments] = await Promise.all([
       prisma.student.findMany({
@@ -160,6 +161,17 @@ router.get(
   asyncHandler(async (req, res) => {
     const { classRoomId, termId } = req.query as Record<string, string | undefined>;
     if (!classRoomId) throw ApiError.badRequest("classRoomId is required");
+    if (req.auth!.role === Role.TEACHER) {
+      const teacher = await prisma.teacher.findUnique({
+        where: { userId: req.auth!.sub },
+        include: { formClasses: { select: { id: true } }, classSubjects: { select: { classRoomId: true } } },
+      });
+      if (!teacher) throw ApiError.forbidden("Teacher profile not found");
+      const hasAccess =
+        teacher.formClasses.some((c) => c.id === classRoomId) ||
+        teacher.classSubjects.some((cs) => cs.classRoomId === classRoomId);
+      if (!hasAccess) throw ApiError.forbidden("You are not assigned to this class");
+    }
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
       : await prisma.term.findFirst({ where: { isCurrent: true } });
