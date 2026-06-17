@@ -25,13 +25,14 @@ export async function getFeeBalance(studentId: string, termId: string): Promise<
   });
   if (!student) throw ApiError.notFound("Student not found");
 
-  const [structures, waivers, payments] = await Promise.all([
-    student.classRoomId
-      ? prisma.feeStructure.findMany({
-          where: { termId, classRoomId: student.classRoomId },
-          include: { category: true },
-        })
-      : Promise.resolve([]),
+  // Per-student assignments take priority over class-wide fee structures.
+  // If the student has no explicit assignments yet, fall back to the class structure
+  // so existing data continues to work before the admin migrates to per-student billing.
+  const [studentItems, waivers, payments] = await Promise.all([
+    prisma.studentFeeItem.findMany({
+      where: { studentId, termId },
+      include: { category: true },
+    }),
     prisma.feeWaiver.aggregate({ where: { studentId, termId }, _sum: { amount: true } }),
     prisma.payment.aggregate({
       where: { studentId, termId, status: PaymentStatus.SUCCESS },
@@ -39,7 +40,20 @@ export async function getFeeBalance(studentId: string, termId: string): Promise<
     }),
   ]);
 
-  const expected = structures.reduce((sum, s) => sum + Number(s.amount), 0);
+  type LineItem = { amount: { toNumber(): number } | number; category: { name: string }; dueDate?: Date | null };
+  let items: LineItem[];
+  if (studentItems.length > 0) {
+    items = studentItems;
+  } else {
+    items = student.classRoomId
+      ? await prisma.feeStructure.findMany({
+          where: { termId, classRoomId: student.classRoomId },
+          include: { category: true },
+        })
+      : [];
+  }
+
+  const expected = items.reduce((sum, s) => sum + (typeof s.amount === "number" ? s.amount : s.amount.toNumber()), 0);
   const waived = Number(waivers._sum.amount ?? 0);
   const paid = Number(payments._sum.amount ?? 0);
   const outstanding = Math.max(0, expected - waived - paid);
@@ -52,10 +66,10 @@ export async function getFeeBalance(studentId: string, termId: string): Promise<
     paid,
     outstanding,
     fullyPaid: outstanding <= 0,
-    items: structures.map((s) => ({
+    items: items.map((s) => ({
       category: s.category.name,
-      amount: Number(s.amount),
-      dueDate: s.dueDate?.toISOString() ?? null,
+      amount: typeof s.amount === "number" ? s.amount : s.amount.toNumber(),
+      dueDate: s.dueDate ? s.dueDate.toISOString() : null,
     })),
   };
 }

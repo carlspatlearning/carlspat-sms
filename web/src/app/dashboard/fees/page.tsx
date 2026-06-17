@@ -24,7 +24,8 @@ interface Structure {
   classRoom: { id: string; name: string };
   term: { id: string; name: string; session: { name: string } };
 }
-interface StudentOpt { id: string; firstName: string; lastName: string; admissionNo: string }
+interface StudentOpt { id: string; firstName: string; lastName: string; admissionNo: string; classRoomId?: string | null }
+interface StudentFeeItem { id: string; amount: string; category: Category }
 interface Waiver {
   id: string; amount: string; reason: string;
   student: { firstName: string; lastName: string; admissionNo: string };
@@ -72,6 +73,15 @@ function StaffFees() {
   const [students, setStudents] = useState<StudentOpt[]>([]);
   const [saving, setSaving] = useState(false);
 
+  // ── Student fee items ────────────────────────────────────────────
+  const [feeStudent, setFeeStudent] = useState<StudentOpt | null>(null);
+  const [studentItems, setStudentItems] = useState<StudentFeeItem[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [addItemDialog, setAddItemDialog] = useState(false);
+  const [addItemForm, setAddItemForm] = useState({ categoryId: "", amount: "" });
+  const [bulkDialog, setBulkDialog] = useState(false);
+  const [bulkClassId, setBulkClassId] = useState("");
+
   const load = useCallback(() => {
     api.get<ApiResponse<Term>>("/settings/current-term").then((r) => setTerm(r.data)).catch(() => null);
     api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => setClasses(r.data)).catch(() => null);
@@ -88,7 +98,7 @@ function StaffFees() {
   }, [term]);
 
   useEffect(() => {
-    api.get<ApiResponse<{ items: StudentOpt[] }>>("/students?pageSize=200").then((r) => setStudents(r.data.items)).catch(() => null);
+    api.get<ApiResponse<{ items: StudentOpt[] }>>("/students?pageSize=200&fields=id,firstName,lastName,admissionNo,classRoomId").then((r) => setStudents(r.data.items)).catch(() => null);
   }, []);
 
   async function addStructure(e: React.FormEvent) {
@@ -187,6 +197,59 @@ function StaffFees() {
     }
   }
 
+  async function loadStudentItems(student: StudentOpt) {
+    if (!term) return;
+    setItemsLoading(true);
+    try {
+      const r = await api.get<ApiResponse<StudentFeeItem[]>>(`/fees/student-items?studentId=${student.id}&termId=${term.id}`);
+      setStudentItems(r.data);
+    } catch { setStudentItems([]); }
+    finally { setItemsLoading(false); }
+  }
+
+  async function addStudentItem(e: React.FormEvent) {
+    e.preventDefault();
+    if (!feeStudent || !term) return;
+    setSaving(true);
+    try {
+      await api.post("/fees/student-items", {
+        studentId: feeStudent.id, termId: term.id,
+        categoryId: addItemForm.categoryId, amount: Number(addItemForm.amount),
+      });
+      setAddItemDialog(false);
+      setAddItemForm({ categoryId: "", amount: "" });
+      setMessage({ type: "success", text: "Fee item added." });
+      await loadStudentItems(feeStudent);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally { setSaving(false); }
+  }
+
+  async function removeStudentItem(id: string) {
+    if (!feeStudent) return;
+    try {
+      await api.delete(`/fees/student-items/${id}`);
+      setMessage({ type: "success", text: "Fee item removed." });
+      await loadStudentItems(feeStudent);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    }
+  }
+
+  async function bulkAssign() {
+    if (!bulkClassId || !term) return;
+    setSaving(true);
+    try {
+      const r = await api.post<ApiResponse<{ assigned: number }>>("/fees/student-items/bulk-assign", { classRoomId: bulkClassId, termId: term.id });
+      setBulkDialog(false);
+      setBulkClassId("");
+      setMessage({ type: "success", text: `Class fees assigned to all students (${r.data.assigned} items).` });
+      if (feeStudent) await loadStudentItems(feeStudent);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally { setSaving(false); }
+  }
+
   async function saveCategory(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -227,6 +290,9 @@ function StaffFees() {
       <PageHeader title="Fee Management" description={term ? `${term.name}, ${term.session.name} session` : undefined}>
         <Button variant="outline" onClick={() => setDiscountDialog(true)}>
           <Plus className="h-4 w-4" /> Add Discount
+        </Button>
+        <Button variant="outline" onClick={() => setBulkDialog(true)}>
+          <Plus className="h-4 w-4" /> Bulk Assign Fees
         </Button>
         <Button variant="outline" onClick={() => { setEditCategory(null); setCategoryForm({ name: "", description: "" }); setCategoryDialog(true); }}>
           <Plus className="h-4 w-4" /> Add Category
@@ -303,6 +369,81 @@ function StaffFees() {
         </Card>
       </div>
 
+      {/* Student fee assignments */}
+      <Card className="mt-6">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <div>
+            <CardTitle>Student Fee Assignments</CardTitle>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Only the categories listed here will be charged to a student. Select a student to view or edit their fees.
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label htmlFor="feeStudent">Select student</Label>
+            <Select id="feeStudent" value={feeStudent?.id ?? ""}
+              onChange={(e) => {
+                const s = students.find((x) => x.id === e.target.value) ?? null;
+                setFeeStudent(s);
+                setStudentItems([]);
+                if (s) loadStudentItems(s);
+              }}>
+              <option value="">— Pick a student —</option>
+              {students.map((s) => (
+                <option key={s.id} value={s.id}>{s.firstName} {s.lastName} ({s.admissionNo})</option>
+              ))}
+            </Select>
+          </div>
+
+          {feeStudent && (
+            <div>
+              {itemsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : (
+                <>
+                  {studentItems.length === 0 ? (
+                    <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                      No specific fees assigned — this student is currently billed using the class-wide fee structure.
+                      Add items below to switch to individual billing.
+                    </p>
+                  ) : (
+                    <Table>
+                      <THead><TR><TH>Category</TH><TH className="text-right">Amount</TH><TH></TH></TR></THead>
+                      <TBody>
+                        {studentItems.map((item) => (
+                          <TR key={item.id}>
+                            <TD className="font-medium">{item.category.name}</TD>
+                            <TD className="text-right">{formatNaira(Number(item.amount))}</TD>
+                            <TD className="text-right">
+                              <Button variant="outline" size="sm" onClick={() => removeStudentItem(item.id)}>
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </TD>
+                          </TR>
+                        ))}
+                        <TR>
+                          <TD className="font-semibold">Total</TD>
+                          <TD className="text-right font-bold">{formatNaira(studentItems.reduce((s, i) => s + Number(i.amount), 0))}</TD>
+                          <TD />
+                        </TR>
+                      </TBody>
+                    </Table>
+                  )}
+                  <Button size="sm" className="mt-3" onClick={() => {
+                    const defaultAmt = structures.find((s) => s.classRoom.id === feeStudent.classRoomId)?.amount ?? "";
+                    setAddItemForm({ categoryId: "", amount: String(Number(defaultAmt) || "") });
+                    setAddItemDialog(true);
+                  }}>
+                    <Plus className="h-3.5 w-3.5" /> Add fee item
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Fee categories */}
       <Card className="mt-6">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -362,6 +503,57 @@ function StaffFees() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={addItemDialog} onClose={() => setAddItemDialog(false)}
+        title={`Add fee item — ${feeStudent?.firstName} ${feeStudent?.lastName}`}>
+        <form onSubmit={addStudentItem} className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Only categories you add here will be billed to this student. Existing items are preserved.
+          </p>
+          <div>
+            <Label htmlFor="aicat">Fee category</Label>
+            <Select id="aicat" required value={addItemForm.categoryId}
+              onChange={(e) => {
+                const catId = e.target.value;
+                const classAmt = structures.find((s) => s.category.id === catId && s.classRoom.id === feeStudent?.classRoomId)?.amount ?? "";
+                setAddItemForm((f) => ({ ...f, categoryId: catId, amount: String(Number(classAmt) || f.amount) }));
+              }}>
+              <option value="">— Select category —</option>
+              {categories
+                .filter((c) => !studentItems.some((i) => i.category.id === c.id))
+                .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="aiamt">Amount (₦)</Label>
+            <Input id="aiamt" type="number" min="1" step="0.01" required value={addItemForm.amount}
+              onChange={(e) => setAddItemForm((f) => ({ ...f, amount: e.target.value }))} />
+          </div>
+          <Button type="submit" className="w-full" disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Add fee item
+          </Button>
+        </form>
+      </Dialog>
+
+      <Dialog open={bulkDialog} onClose={() => setBulkDialog(false)} title="Bulk assign class fees to all students">
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            This copies the fee structure of the selected class to every active student in that class for the current term.
+            Students who already have assignments will have their amounts updated. You can then remove specific categories
+            (e.g. Transport, Lessons) from individual students who do not use them.
+          </p>
+          <div>
+            <Label htmlFor="bulkcls">Class</Label>
+            <Select id="bulkcls" value={bulkClassId} onChange={(e) => setBulkClassId(e.target.value)}>
+              <option value="">— Select class —</option>
+              {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </div>
+          <Button className="w-full" disabled={!bulkClassId || saving} onClick={bulkAssign}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Assign fees to all students in this class
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog open={categoryDialog} onClose={() => setCategoryDialog(false)}
         title={editCategory ? `Edit category — ${editCategory.name}` : "Add fee category"}>

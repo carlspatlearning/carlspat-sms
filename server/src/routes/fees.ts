@@ -120,6 +120,86 @@ router.delete(
   })
 );
 
+// ── Per-student fee items ────────────────────────────────────────────────────
+
+router.get(
+  "/student-items",
+  authorize(...FEE_MANAGERS),
+  asyncHandler(async (req, res) => {
+    const { studentId, termId } = req.query as Record<string, string | undefined>;
+    if (!studentId || !termId) throw ApiError.badRequest("studentId and termId are required");
+    const items = await prisma.studentFeeItem.findMany({
+      where: { studentId, termId },
+      include: { category: true },
+      orderBy: { category: { name: "asc" } },
+    });
+    res.json({ success: true, data: items });
+  })
+);
+
+router.post(
+  "/student-items/bulk-assign",
+  authorize(...FEE_MANAGERS),
+  validate(z.object({ body: z.object({ classRoomId: z.string(), termId: z.string() }) })),
+  asyncHandler(async (req, res) => {
+    const { classRoomId, termId } = req.body;
+    const school = await prisma.school.findFirst();
+    if (!school) throw ApiError.notFound("School not configured");
+    const [structures, students] = await Promise.all([
+      prisma.feeStructure.findMany({ where: { classRoomId, termId } }),
+      prisma.student.findMany({ where: { classRoomId, status: "ACTIVE" }, select: { id: true } }),
+    ]);
+    if (structures.length === 0) throw ApiError.badRequest("No fee structures configured for this class and term");
+    const ops = students.flatMap((s) =>
+      structures.map((fs) =>
+        prisma.studentFeeItem.upsert({
+          where: { studentId_termId_categoryId: { studentId: s.id, termId, categoryId: fs.categoryId } },
+          update: { amount: fs.amount },
+          create: { schoolId: school.id, studentId: s.id, termId, categoryId: fs.categoryId, amount: fs.amount },
+        })
+      )
+    );
+    await prisma.$transaction(ops);
+    res.json({ success: true, data: { assigned: ops.length } });
+  })
+);
+
+router.post(
+  "/student-items",
+  authorize(...FEE_MANAGERS),
+  validate(z.object({
+    body: z.object({
+      studentId: z.string(),
+      termId: z.string(),
+      categoryId: z.string(),
+      amount: z.number().positive(),
+    }),
+  })),
+  asyncHandler(async (req, res) => {
+    const school = await prisma.school.findFirst();
+    if (!school) throw ApiError.notFound("School not configured");
+    const { studentId, termId, categoryId, amount } = req.body;
+    const item = await prisma.studentFeeItem.upsert({
+      where: { studentId_termId_categoryId: { studentId, termId, categoryId } },
+      update: { amount },
+      create: { schoolId: school.id, studentId, termId, categoryId, amount },
+      include: { category: true },
+    });
+    audit(req, "fees.student_item_set", "StudentFeeItem", item.id);
+    res.status(201).json({ success: true, data: item });
+  })
+);
+
+router.delete(
+  "/student-items/:id",
+  authorize(...FEE_MANAGERS),
+  asyncHandler(async (req, res) => {
+    await prisma.studentFeeItem.delete({ where: { id: req.params.id } });
+    audit(req, "fees.student_item_delete", "StudentFeeItem", req.params.id);
+    res.json({ success: true, message: "Fee item removed" });
+  })
+);
+
 // ── Waivers / discounts ──────────────────────────────────────────────────────
 
 router.get(

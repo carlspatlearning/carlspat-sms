@@ -90,6 +90,7 @@ model School {
   gradeScales        GradeScale[]
   feeCategories      FeeCategory[]
   feeStructures      FeeStructure[]
+  studentFeeItems    StudentFeeItem[]
   announcements      Announcement[]
   expenseCategories  ExpenseCategory[]
   expenses           Expense[]
@@ -118,14 +119,15 @@ model Term {
   endDate   DateTime
   isCurrent Boolean  @default(false)
 
-  session       AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  attendance    Attendance[]
-  scores        Score[]
-  termReports   TermReport[]
-  feeStructures FeeStructure[]
-  payments      Payment[]
-  feeWaivers    FeeWaiver[]
-  expenses      Expense[]
+  session         AcademicSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  attendance      Attendance[]
+  scores          Score[]
+  termReports     TermReport[]
+  feeStructures   FeeStructure[]
+  studentFeeItems StudentFeeItem[]
+  payments        Payment[]
+  feeWaivers      FeeWaiver[]
+  expenses        Expense[]
 
   @@unique([sessionId, name])
 }
@@ -244,16 +246,17 @@ model Student {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  school      School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user        User?        @relation(fields: [userId], references: [id])
-  parent      Parent?      @relation(fields: [parentId], references: [id])
-  classRoom   ClassRoom?   @relation(fields: [classRoomId], references: [id])
-  attendance  Attendance[]
-  scores      Score[]
-  termReports TermReport[]
-  payments    Payment[]
-  feeWaivers  FeeWaiver[]
-  promotions  Promotion[]
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user            User?            @relation(fields: [userId], references: [id])
+  parent          Parent?          @relation(fields: [parentId], references: [id])
+  classRoom       ClassRoom?       @relation(fields: [classRoomId], references: [id])
+  attendance      Attendance[]
+  scores          Score[]
+  termReports     TermReport[]
+  payments        Payment[]
+  feeWaivers      FeeWaiver[]
+  feeItems        StudentFeeItem[]
+  promotions      Promotion[]
 
   @@index([classRoomId])
   @@index([parentId])
@@ -388,8 +391,9 @@ model FeeCategory {
   name        String // Tuition, PTA, Examination, Development Levy, Transport, Other
   description String?
 
-  school     School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  structures FeeStructure[]
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  structures      FeeStructure[]
+  studentFeeItems StudentFeeItem[]
 
   @@unique([schoolId, name])
 }
@@ -422,6 +426,26 @@ model FeeWaiver {
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   term    Term    @relation(fields: [termId], references: [id], onDelete: Cascade)
+}
+
+// Per-student fee assignments: only the categories in this table are billed for a student.
+// If a student has no entries here the system falls back to the class-wide FeeStructure.
+model StudentFeeItem {
+  id         String   @id @default(cuid())
+  schoolId   String
+  studentId  String
+  termId     String
+  categoryId String
+  amount     Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
+
+  school   School      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student  Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  term     Term        @relation(fields: [termId], references: [id], onDelete: Cascade)
+  category FeeCategory @relation(fields: [categoryId], references: [id])
+
+  @@unique([studentId, termId, categoryId])
+  @@index([studentId, termId])
 }
 
 model Payment {
