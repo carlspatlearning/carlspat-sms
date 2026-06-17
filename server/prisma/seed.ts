@@ -136,16 +136,16 @@ async function main() {
   // Teacher + profile, assigned as form teacher of Primary 5
   const teacherUser = await upsertUser("teacher@carlspat.sch.ng", Role.TEACHER, "Tunde", "Bakare", "Teacher#123");
   const teacher = await prisma.teacher.upsert({
-    where: { userId: teacherUser.id },
-    update: {},
+    where: { staffNo: "CPS/STF/001" },
+    update: { userId: teacherUser.id },
     create: { userId: teacherUser.id, staffNo: "CPS/STF/001", qualification: "B.Ed", specialization: "Mathematics" },
   });
   await prisma.classRoom.update({ where: { id: classes["Primary 5"].id }, data: { formTeacherId: teacher.id } });
 
   const teacher2User = await upsertUser("teacher2@carlspat.sch.ng", Role.TEACHER, "Chioma", "Okafor", "Teacher#123");
   const teacher2 = await prisma.teacher.upsert({
-    where: { userId: teacher2User.id },
-    update: {},
+    where: { staffNo: "CPS/STF/002" },
+    update: { userId: teacher2User.id },
     create: { userId: teacher2User.id, staffNo: "CPS/STF/002", qualification: "NCE", specialization: "English" },
   });
 
