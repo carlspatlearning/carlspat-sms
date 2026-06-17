@@ -34,12 +34,23 @@ router.get(
     const attendanceRate = attTotal ? Math.round(((att("PRESENT") + att("LATE")) / attTotal) * 1000) / 10 : 0;
 
     // Fee collection for the current term
-    let feeStats = { expected: 0, collected: 0, outstanding: 0, collectionRate: 0 };
+    let feeStats = { expected: 0, collected: 0, waived: 0, outstanding: 0, collectionRate: 0 };
+    let finance = { income: 0, expenditure: 0, balance: 0 };
     if (term) {
-      const collected = await prisma.payment.aggregate({
-        where: { termId: term.id, status: PaymentStatus.SUCCESS },
-        _sum: { amount: true },
-      });
+      const [collected, waivedAgg, expenditureAgg] = await Promise.all([
+        prisma.payment.aggregate({
+          where: { termId: term.id, status: PaymentStatus.SUCCESS },
+          _sum: { amount: true },
+        }),
+        prisma.feeWaiver.aggregate({
+          where: { termId: term.id },
+          _sum: { amount: true },
+        }),
+        prisma.expense.aggregate({
+          where: { termId: term.id },
+          _sum: { amount: true },
+        }),
+      ]);
       // Expected = Σ per-student class fee structures
       const students = await prisma.student.findMany({
         where: { status: "ACTIVE", classRoomId: { not: null } },
@@ -53,12 +64,16 @@ router.get(
       const perClass = new Map(structures.map((s) => [s.classRoomId, Number(s._sum.amount ?? 0)]));
       const expected = students.reduce((sum, s) => sum + (perClass.get(s.classRoomId!) ?? 0), 0);
       const collectedNum = Number(collected._sum.amount ?? 0);
+      const waived = Number(waivedAgg._sum.amount ?? 0);
+      const expenditure = Number(expenditureAgg._sum.amount ?? 0);
       feeStats = {
         expected,
         collected: collectedNum,
-        outstanding: Math.max(0, expected - collectedNum),
+        waived,
+        outstanding: Math.max(0, expected - waived - collectedNum),
         collectionRate: expected ? Math.round((collectedNum / expected) * 1000) / 10 : 0,
       };
+      finance = { income: collectedNum, expenditure, balance: collectedNum - expenditure };
     }
 
     // Academic performance: average score % per class for the current term
@@ -93,6 +108,7 @@ router.get(
         totals: { students: totalStudents, teachers: totalTeachers, parents: totalParents, classes: totalClasses },
         attendanceRate,
         fees: feeStats,
+        finance,
         classPerformance,
       },
     });
