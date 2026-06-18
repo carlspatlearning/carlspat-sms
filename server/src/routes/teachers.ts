@@ -116,6 +116,43 @@ router.get(
   })
 );
 
+// PUT /teachers/:id/subjects — assign/unassign this teacher to class-subjects
+router.put(
+  "/:id/subjects",
+  authorize(...ADMINS),
+  validate(z.object({
+    body: z.object({
+      classRoomId: z.string(),
+      subjectIds: z.array(z.string()),
+    }),
+  })),
+  asyncHandler(async (req, res) => {
+    const { classRoomId, subjectIds } = req.body as { classRoomId: string; subjectIds: string[] };
+    const teacher = await prisma.teacher.findUnique({ where: { id: req.params.id } });
+    if (!teacher) throw ApiError.notFound("Teacher not found");
+    const school = await prisma.school.findFirst();
+    if (!school) throw ApiError.notFound("School not configured");
+
+    await prisma.$transaction(async (tx) => {
+      // Release subjects in this class that are no longer in the new list
+      await tx.classSubject.updateMany({
+        where: { classRoomId, teacherId: teacher.id, subjectId: { notIn: subjectIds } },
+        data: { teacherId: null },
+      });
+      // Assign teacher to every selected subject (creates the class-subject if it doesn't exist)
+      for (const subjectId of subjectIds) {
+        await tx.classSubject.upsert({
+          where: { classRoomId_subjectId: { classRoomId, subjectId } },
+          update: { teacherId: teacher.id },
+          create: { classRoomId, subjectId, teacherId: teacher.id },
+        });
+      }
+    });
+    audit(req, "teacher.subjects_update", "Teacher", teacher.id, { classRoomId, count: subjectIds.length });
+    res.json({ success: true, message: "Subject assignments updated" });
+  })
+);
+
 // PUT /teachers/:id — profile and account details
 router.put(
   "/:id",

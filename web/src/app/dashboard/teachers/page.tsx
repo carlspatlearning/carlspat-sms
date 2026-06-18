@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { BookOpen, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/alert";
 import { Dialog } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Select } from "@/components/ui/select";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 
 interface TeacherRow {
@@ -19,21 +20,93 @@ interface TeacherRow {
   specialization: string | null;
   user: { email: string; firstName: string; lastName: string; phone: string | null; isActive: boolean };
   formClasses: { name: string }[];
-  classSubjects: { subject: { name: string }; classRoom: { name: string } }[];
+  classSubjects: { classRoomId: string; subjectId: string; subject: { name: string }; classRoom: { name: string } }[];
 }
+interface ClassRoom { id: string; name: string }
+interface Subject { id: string; name: string }
 
 export default function TeachersPage() {
   const [data, setData] = useState<Paginated<TeacherRow> | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Add teacher dialog
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({
     firstName: "", lastName: "", email: "", phone: "", password: "", qualification: "", specialization: "",
   });
+
+  // Edit teacher dialog
   const [editTeacher, setEditTeacher] = useState<TeacherRow | null>(null);
   const [editForm, setEditForm] = useState({
     firstName: "", lastName: "", email: "", phone: "", qualification: "", specialization: "",
   });
+
+  // Assign subjects dialog
+  const [assignTeacher, setAssignTeacher] = useState<TeacherRow | null>(null);
+  const [allClasses, setAllClasses] = useState<ClassRoom[]>([]);
+  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
+  const [assignClassId, setAssignClassId] = useState("");
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState<Set<string>>(new Set());
+  const [assignSaving, setAssignSaving] = useState(false);
+
+  function openAssign(t: TeacherRow) {
+    setAssignTeacher(t);
+    setAssignClassId((prev) => prev || allClasses[0]?.id || "");
+  }
+
+  // When class changes in the assign dialog, pre-check what this teacher already teaches there
+  useEffect(() => {
+    if (!assignTeacher || !assignClassId) return;
+    const already = new Set(
+      assignTeacher.classSubjects
+        .filter((cs) => cs.classRoomId === assignClassId)
+        .map((cs) => cs.subjectId)
+    );
+    setSelectedSubjectIds(already);
+  }, [assignTeacher, assignClassId]);
+
+  // Initialise assign class when dialog opens
+  useEffect(() => {
+    if (assignTeacher && allClasses.length && !assignClassId) {
+      setAssignClassId(allClasses[0].id);
+    }
+  }, [assignTeacher, allClasses, assignClassId]);
+
+  function toggleSubject(id: string) {
+    setSelectedSubjectIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (selectedSubjectIds.size === allSubjects.length) {
+      setSelectedSubjectIds(new Set());
+    } else {
+      setSelectedSubjectIds(new Set(allSubjects.map((s) => s.id)));
+    }
+  }
+
+  async function saveAssignments() {
+    if (!assignTeacher || !assignClassId) return;
+    setAssignSaving(true);
+    try {
+      await api.put(`/teachers/${assignTeacher.id}/subjects`, {
+        classRoomId: assignClassId,
+        subjectIds: [...selectedSubjectIds],
+      });
+      setMessage({ type: "success", text: "Subject assignments saved." });
+      setAssignTeacher(null);
+      setAssignClassId("");
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to save" });
+    } finally {
+      setAssignSaving(false);
+    }
+  }
 
   function openEdit(t: TeacherRow) {
     setEditTeacher(t);
@@ -84,7 +157,13 @@ export default function TeachersPage() {
   const load = useCallback(() => {
     api.get<ApiResponse<Paginated<TeacherRow>>>("/teachers?pageSize=50").then((r) => setData(r.data)).catch(() => null);
   }, []);
+
   useEffect(load, [load]);
+
+  useEffect(() => {
+    api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => setAllClasses(r.data)).catch(() => null);
+    api.get<ApiResponse<Subject[]>>("/subjects").then((r) => setAllSubjects(r.data)).catch(() => null);
+  }, []);
 
   async function addTeacher(e: React.FormEvent) {
     e.preventDefault();
@@ -156,6 +235,9 @@ export default function TeachersPage() {
               </TD>
               <TD className="text-right">
                 <div className="flex justify-end gap-1.5">
+                  <Button variant="outline" size="sm" onClick={() => openAssign(t)} title="Assign subjects">
+                    <BookOpen className="h-3.5 w-3.5" /> Subjects
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => openEdit(t)}>
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </Button>
@@ -172,6 +254,64 @@ export default function TeachersPage() {
         </TBody>
       </Table>
 
+      {/* ── Assign Subjects dialog ───────────────────────────────────────── */}
+      <Dialog
+        open={Boolean(assignTeacher)}
+        onClose={() => { setAssignTeacher(null); setAssignClassId(""); }}
+        title={`Assign Subjects — ${assignTeacher ? `${assignTeacher.user.firstName} ${assignTeacher.user.lastName}` : ""}`}
+      >
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="aclass">Class</Label>
+            <Select
+              id="aclass"
+              value={assignClassId}
+              onChange={(e) => setAssignClassId(e.target.value)}
+            >
+              {allClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <Label>Subjects</Label>
+              <button
+                type="button"
+                className="text-xs text-primary underline-offset-2 hover:underline"
+                onClick={toggleAll}
+              >
+                {selectedSubjectIds.size === allSubjects.length ? "Clear all" : "Select all"}
+              </button>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded-md border p-3 space-y-2">
+              {allSubjects.map((s) => (
+                <label key={s.id} className="flex cursor-pointer items-center gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300"
+                    checked={selectedSubjectIds.has(s.id)}
+                    onChange={() => toggleSubject(s.id)}
+                  />
+                  {s.name}
+                </label>
+              ))}
+              {allSubjects.length === 0 && (
+                <p className="text-sm text-muted-foreground">No subjects configured yet.</p>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {selectedSubjectIds.size} of {allSubjects.length} selected
+            </p>
+          </div>
+
+          <Button className="w-full" onClick={saveAssignments} disabled={assignSaving}>
+            {assignSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save assignments
+          </Button>
+        </div>
+      </Dialog>
+
+      {/* ── Edit teacher dialog ──────────────────────────────────────────── */}
       <Dialog open={Boolean(editTeacher)} onClose={() => setEditTeacher(null)} title={`Edit teacher — ${editTeacher?.staffNo ?? ""}`}>
         <form onSubmit={saveEdit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -208,6 +348,7 @@ export default function TeachersPage() {
         </form>
       </Dialog>
 
+      {/* ── Add teacher dialog ───────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Add teacher">
         <form onSubmit={addTeacher} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
