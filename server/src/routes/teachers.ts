@@ -47,6 +47,43 @@ router.get(
   })
 );
 
+// POST /teachers/from-user — promote an existing user account into a teacher profile
+router.post(
+  "/from-user",
+  authorize(...ADMINS),
+  validate(z.object({
+    body: z.object({
+      userId: z.string(),
+      qualification: z.string().optional(),
+      specialization: z.string().optional(),
+    }),
+  })),
+  asyncHandler(async (req, res) => {
+    const { userId, qualification, specialization } = req.body as {
+      userId: string; qualification?: string; specialization?: string;
+    };
+    const user = await prisma.user.findUnique({ where: { id: userId }, include: { teacher: true } });
+    if (!user) throw ApiError.notFound("User not found");
+    if (user.teacher) throw ApiError.conflict("This user already has a teacher profile");
+
+    const count = await prisma.teacher.count();
+    const teacher = await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { role: Role.TEACHER } });
+      return tx.teacher.create({
+        data: {
+          staffNo: `CPS/STF/${String(count + 1).padStart(3, "0")}`,
+          userId,
+          qualification,
+          specialization,
+        },
+        include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
+      });
+    });
+    audit(req, "teacher.create_from_user", "Teacher", teacher.id);
+    res.status(201).json({ success: true, data: teacher });
+  })
+);
+
 // POST /teachers — creates user account + teacher profile
 router.post(
   "/",
