@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Download, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { getUser } from "@/lib/auth";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { formatDate, ROLE_LABELS } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -27,6 +28,9 @@ interface UserRow {
 }
 
 export default function UsersPage() {
+  const currentUser = getUser();
+  const isSuperAdmin = currentUser?.role === "SUPER_ADMIN";
+  const [downloading, setDownloading] = useState(false);
   const [data, setData] = useState<Paginated<UserRow> | null>(null);
   const [role, setRole] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -79,6 +83,17 @@ export default function UsersPage() {
       load();
     } catch (err) {
       setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to remove account" });
+    }
+  }
+
+  async function downloadPdf() {
+    setDownloading(true);
+    try {
+      await api.download("/users/export/pdf", `users-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Download failed" });
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -136,6 +151,12 @@ export default function UsersPage() {
   return (
     <div>
       <PageHeader title="User Accounts" description="Login accounts and account status">
+        {isSuperAdmin && (
+          <Button variant="outline" onClick={downloadPdf} disabled={downloading}>
+            {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export PDF
+          </Button>
+        )}
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="h-4 w-4" /> Add Account
         </Button>
