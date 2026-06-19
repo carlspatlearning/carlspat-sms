@@ -29,7 +29,8 @@ interface PaymentRow {
   term: { name: string; session: { name: string } };
   recordedBy: { firstName: string; lastName: string } | null;
 }
-interface StudentOpt { id: string; firstName: string; lastName: string; admissionNo: string }
+interface StudentOpt { id: string; firstName: string; lastName: string; admissionNo: string; classRoomId: string | null }
+interface ClassRoom { id: string; name: string }
 interface Term { id: string; name: string }
 
 export default function PaymentsPage() {
@@ -40,11 +41,17 @@ export default function PaymentsPage() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [students, setStudents] = useState<StudentOpt[]>([]);
+  const [classes, setClasses] = useState<ClassRoom[]>([]);
+  const [filterClassId, setFilterClassId] = useState("");
+  const [allStudents, setAllStudents] = useState<StudentOpt[]>([]);
   const [term, setTerm] = useState<Term | null>(null);
   const [childIds, setChildIds] = useState<string[]>([]);
   const [message, setMessage] = useState<{ type: "success" | "destructive"; text: string } | null>(null);
   const [form, setForm] = useState({ studentId: "", amount: "", method: "CASH", reference: "", notes: "" });
+
+  const filteredStudents = filterClassId
+    ? allStudents.filter((s) => s.classRoomId === filterClassId)
+    : allStudents;
   const [saving, setSaving] = useState(false);
   const [editPayment, setEditPayment] = useState<PaymentRow | null>(null);
   const [editForm, setEditForm] = useState({ amount: "", method: "CASH", reference: "", notes: "" });
@@ -111,7 +118,8 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     if (!isManager) return;
-    api.get<ApiResponse<{ items: StudentOpt[] }>>("/students?pageSize=100").then((r) => setStudents(r.data.items)).catch(() => null);
+    api.get<ApiResponse<{ items: StudentOpt[] }>>("/students?pageSize=500").then((r) => setAllStudents(r.data.items)).catch(() => null);
+    api.get<ApiResponse<ClassRoom[]>>("/classes").then((r) => setClasses(r.data)).catch(() => null);
     api.get<ApiResponse<Term>>("/settings/current-term").then((r) => setTerm(r.data)).catch(() => null);
   }, [isManager]);
 
@@ -130,6 +138,7 @@ export default function PaymentsPage() {
       });
       setDialogOpen(false);
       setForm({ studentId: "", amount: "", method: "CASH", reference: "", notes: "" });
+      setFilterClassId("");
       setMessage({ type: "success", text: "Payment recorded — receipt generated." });
       load();
     } catch (err) {
@@ -269,13 +278,27 @@ export default function PaymentsPage() {
         </form>
       </Dialog>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Record offline payment">
+      <Dialog open={dialogOpen} onClose={() => { setDialogOpen(false); setFilterClassId(""); }} title="Record offline payment">
         <form onSubmit={recordPayment} className="space-y-4">
+          <div>
+            <Label htmlFor="pclass">Class</Label>
+            <Select
+              id="pclass"
+              value={filterClassId}
+              onChange={(e) => {
+                setFilterClassId(e.target.value);
+                setForm((f) => ({ ...f, studentId: "" }));
+              }}
+            >
+              <option value="">— All classes —</option>
+              {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </div>
           <div>
             <Label htmlFor="pstudent">Student</Label>
             <Select id="pstudent" required value={form.studentId} onChange={(e) => setForm((f) => ({ ...f, studentId: e.target.value }))}>
               <option value="">— Select student —</option>
-              {students.map((s) => (
+              {filteredStudents.map((s) => (
                 <option key={s.id} value={s.id}>{s.firstName} {s.lastName} ({s.admissionNo})</option>
               ))}
             </Select>
