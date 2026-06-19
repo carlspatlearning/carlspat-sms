@@ -32,6 +32,7 @@ interface ParentStats {
 export default function DashboardPage() {
   const user = typeof window !== "undefined" ? getUser() : null;
   const isStaff = user && ["SUPER_ADMIN", "ADMIN", "TEACHER", "ACCOUNTANT"].includes(user.role);
+  const canSeeFinance = user && ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT"].includes(user.role);
 
   const [staff, setStaff] = useState<StaffStats | null>(null);
   const [me, setMe] = useState<ParentStats | null>(null);
@@ -65,7 +66,7 @@ export default function DashboardPage() {
 
       {isStaff && staff && (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className={`grid gap-4 sm:grid-cols-2 ${canSeeFinance ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
             <StatCard label="Total Students" value={staff.totals.students} icon={<GraduationCap className="h-5 w-5" />} />
             <StatCard label="Total Teachers" value={staff.totals.teachers} icon={<Users className="h-5 w-5" />} />
             <StatCard
@@ -75,80 +76,80 @@ export default function DashboardPage() {
               icon={<CalendarCheck className="h-5 w-5" />}
               tone={staff.attendanceRate >= 90 ? "success" : staff.attendanceRate >= 75 ? "warning" : "danger"}
             />
-            <StatCard
-              label="Fee Collection"
-              value={`${staff.fees.collectionRate}%`}
-              hint={`${formatNaira(staff.fees.collected)} of ${formatNaira(staff.fees.expected)}`}
-              icon={<Wallet className="h-5 w-5" />}
-              tone={staff.fees.collectionRate >= 80 ? "success" : "warning"}
-            />
+            {canSeeFinance && staff.fees && (
+              <StatCard
+                label="Fee Collection"
+                value={`${staff.fees.collectionRate}%`}
+                hint={`${formatNaira(staff.fees.collected)} of ${formatNaira(staff.fees.expected)}`}
+                icon={<Wallet className="h-5 w-5" />}
+                tone={staff.fees.collectionRate >= 80 ? "success" : "warning"}
+              />
+            )}
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Outstanding Fees</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-3xl font-bold text-destructive">{formatNaira(staff.fees.outstanding)}</p>
-                <div className="mt-2 space-y-0.5 text-sm text-muted-foreground">
-                  <p>Expected: <span className="font-medium text-foreground">{formatNaira(staff.fees.expected)}</span></p>
-                  <p>Collected: <span className="font-medium text-green-600">{formatNaira(staff.fees.collected)}</span></p>
-                  {(staff.fees.waived ?? 0) > 0 && (
-                    <p>Discounts: <span className="font-medium text-blue-600">-{formatNaira(staff.fees.waived!)}</span></p>
-                  )}
-                </div>
-                {(user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "ACCOUNTANT") && (
+          {canSeeFinance && staff.fees && (
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Outstanding Fees</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-bold text-destructive">{formatNaira(staff.fees.outstanding)}</p>
+                  <div className="mt-2 space-y-0.5 text-sm text-muted-foreground">
+                    <p>Expected: <span className="font-medium text-foreground">{formatNaira(staff.fees.expected)}</span></p>
+                    <p>Collected: <span className="font-medium text-green-600">{formatNaira(staff.fees.collected)}</span></p>
+                    {(staff.fees.waived ?? 0) > 0 && (
+                      <p>Discounts: <span className="font-medium text-blue-600">-{formatNaira(staff.fees.waived!)}</span></p>
+                    )}
+                  </div>
                   <Link href="/dashboard/fees" className="mt-3 inline-block text-sm font-medium text-primary hover:underline">
                     View debtors report →
                   </Link>
-                )}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Financial Summary (current term)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {(() => {
-                  const fin = staff.finance ?? { income: 0, expenditure: 0, balance: 0 };
-                  return (
-                    <>
-                      <div className="flex items-center justify-between rounded-lg bg-green-50 p-3 dark:bg-green-950">
-                        <div className="flex items-center gap-2">
-                          <TrendingUp className="h-4 w-4 text-green-600" />
-                          <span className="text-sm font-medium">Total Income</span>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Financial Summary (current term)</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {(() => {
+                    const fin = staff.finance ?? { income: 0, expenditure: 0, balance: 0 };
+                    return (
+                      <>
+                        <div className="flex items-center justify-between rounded-lg bg-green-50 p-3 dark:bg-green-950">
+                          <div className="flex items-center gap-2">
+                            <TrendingUp className="h-4 w-4 text-green-600" />
+                            <span className="text-sm font-medium">Total Income</span>
+                          </div>
+                          <span className="font-bold text-green-600">{formatNaira(fin.income)}</span>
                         </div>
-                        <span className="font-bold text-green-600">{formatNaira(fin.income)}</span>
-                      </div>
-                      <div className="flex items-center justify-between rounded-lg bg-red-50 p-3 dark:bg-red-950">
-                        <div className="flex items-center gap-2">
-                          <TrendingDown className="h-4 w-4 text-destructive" />
-                          <span className="text-sm font-medium">Total Expenditure</span>
+                        <div className="flex items-center justify-between rounded-lg bg-red-50 p-3 dark:bg-red-950">
+                          <div className="flex items-center gap-2">
+                            <TrendingDown className="h-4 w-4 text-destructive" />
+                            <span className="text-sm font-medium">Total Expenditure</span>
+                          </div>
+                          <span className="font-bold text-destructive">{formatNaira(fin.expenditure)}</span>
                         </div>
-                        <span className="font-bold text-destructive">{formatNaira(fin.expenditure)}</span>
-                      </div>
-                      <div className={`flex items-center justify-between rounded-lg p-3 ${fin.balance >= 0 ? "bg-blue-50 dark:bg-blue-950" : "bg-orange-50 dark:bg-orange-950"}`}>
-                        <div className="flex items-center gap-2">
-                          <Scale className={`h-4 w-4 ${fin.balance >= 0 ? "text-blue-600" : "text-orange-600"}`} />
-                          <span className="text-sm font-medium">Net Balance</span>
+                        <div className={`flex items-center justify-between rounded-lg p-3 ${fin.balance >= 0 ? "bg-blue-50 dark:bg-blue-950" : "bg-orange-50 dark:bg-orange-950"}`}>
+                          <div className="flex items-center gap-2">
+                            <Scale className={`h-4 w-4 ${fin.balance >= 0 ? "text-blue-600" : "text-orange-600"}`} />
+                            <span className="text-sm font-medium">Net Balance</span>
+                          </div>
+                          <span className={`font-bold ${fin.balance >= 0 ? "text-blue-600" : "text-orange-600"}`}>
+                            {fin.balance < 0 ? "-" : ""}{formatNaira(Math.abs(fin.balance))}
+                          </span>
                         </div>
-                        <span className={`font-bold ${fin.balance >= 0 ? "text-blue-600" : "text-orange-600"}`}>
-                          {fin.balance < 0 ? "-" : ""}{formatNaira(Math.abs(fin.balance))}
-                        </span>
-                      </div>
-                    </>
-                  );
-                })()}
-                {(user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "ACCOUNTANT") && (
+                      </>
+                    );
+                  })()}
                   <Link href="/dashboard/expenditures" className="inline-block text-sm font-medium text-primary hover:underline">
                     View expenditures →
                   </Link>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           <div className="mt-4">
             <Card>

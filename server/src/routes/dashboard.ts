@@ -12,7 +12,7 @@ router.use(authenticate);
 router.get(
   "/stats",
   authorize(...STAFF),
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     const term = await prisma.term.findFirst({ where: { isCurrent: true }, include: { session: true } });
 
     const [totalStudents, totalTeachers, totalParents, totalClasses] = await Promise.all([
@@ -33,10 +33,11 @@ router.get(
     const attTotal = att("PRESENT") + att("LATE") + att("ABSENT");
     const attendanceRate = attTotal ? Math.round(((att("PRESENT") + att("LATE")) / attTotal) * 1000) / 10 : 0;
 
-    // Fee collection for the current term
-    let feeStats = { expected: 0, collected: 0, waived: 0, outstanding: 0, collectionRate: 0 };
-    let finance = { income: 0, expenditure: 0, balance: 0 };
-    if (term) {
+    // Fee collection for the current term — only computed for finance roles
+    const canSeeFinance = ([Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT] as Role[]).includes(req.auth!.role);
+    let feeStats: { expected: number; collected: number; waived: number; outstanding: number; collectionRate: number } | null = null;
+    let finance: { income: number; expenditure: number; balance: number } | null = null;
+    if (term && canSeeFinance) {
       const [collected, waivedAgg, expenditureAgg] = await Promise.all([
         prisma.payment.aggregate({
           where: { termId: term.id, status: PaymentStatus.SUCCESS },
@@ -107,8 +108,7 @@ router.get(
         currentTerm: term ? { id: term.id, name: term.name, session: term.session.name } : null,
         totals: { students: totalStudents, teachers: totalTeachers, parents: totalParents, classes: totalClasses },
         attendanceRate,
-        fees: feeStats,
-        finance,
+        ...(feeStats !== null ? { fees: feeStats, finance } : {}),
         classPerformance,
       },
     });
