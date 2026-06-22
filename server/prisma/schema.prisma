@@ -64,6 +64,14 @@ enum Audience {
   STAFF
 }
 
+enum ResourceType {
+  ASSIGNMENT
+  LESSON_NOTE
+  PAST_QUESTION
+  SCHEME_OF_WORK
+  OTHER
+}
+
 // ──────────────────────────── School / settings ────────────────────────────
 
 model School {
@@ -94,6 +102,7 @@ model School {
   announcements      Announcement[]
   expenseCategories  ExpenseCategory[]
   expenses           Expense[]
+  resources          Resource[]
 }
 
 model AcademicSession {
@@ -193,6 +202,7 @@ model User {
   attendanceMarked  Attendance[] @relation("MarkedAttendance")
   scoresRecorded    Score[]      @relation("RecordedScores")
   expensesRecorded  Expense[]    @relation("RecordedExpenses")
+  resourcesUploaded Resource[]   @relation("UploadedResources")
 
   @@index([role])
 }
@@ -281,6 +291,7 @@ model ClassRoom {
   attendance    Attendance[]
   termReports   TermReport[]
   feeStructures FeeStructure[]
+  resources     Resource[]
 
   @@unique([schoolId, name, section])
 }
@@ -554,4 +565,28 @@ model AuditLog {
 
   @@index([createdAt])
   @@index([userId])
+}
+
+// ──────────────────────────── Resources ────────────────────────────
+
+model Resource {
+  id           String       @id @default(cuid())
+  schoolId     String
+  title        String
+  description  String?
+  type         ResourceType
+  fileUrl      String
+  fileName     String
+  fileSize     Int?
+  mimeType     String
+  classRoomId  String?
+  uploadedById String
+  createdAt    DateTime     @default(now())
+
+  school      School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classRoom   ClassRoom? @relation(fields: [classRoomId], references: [id])
+  uploadedBy  User       @relation("UploadedResources", fields: [uploadedById], references: [id])
+
+  @@index([schoolId, createdAt])
+  @@index([classRoomId])
 }
