@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Plus, Save } from "lucide-react";
+import { GraduationCap, Loader2, Plus, Save } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -12,6 +12,7 @@ import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Dialog } from "@/components/ui/dialog";
 
 interface School {
   name: string; motto: string; address: string; phone: string; email: string;
@@ -163,12 +164,30 @@ function Sessions() {
   const [form, setForm] = useState({ name: "", startDate: "", endDate: "" });
   const [termForm, setTermForm] = useState({ sessionId: "", name: "", startDate: "", endDate: "" });
   const [saving, setSaving] = useState(false);
+  const [promotingId, setPromotingId] = useState<string | null>(null);
+  const [confirmPromote, setConfirmPromote] = useState<SessionRow | null>(null);
 
   const load = () =>
     api.get<ApiResponse<SessionRow[]>>("/settings/sessions").then((r) => setSessions(r.data)).catch(() => null);
   useEffect(() => {
     load();
   }, []);
+
+  async function promoteAll(session: SessionRow) {
+    setPromotingId(session.id);
+    setConfirmPromote(null);
+    try {
+      const r = await api.post<{ data: { promoted: number; graduated: number; total: number }; message: string }>(
+        `/settings/sessions/${session.id}/promote`, {}
+      );
+      setMessage({ type: "success", text: r.message ?? `Done: ${r.data.promoted} promoted, ${r.data.graduated} graduated.` });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Promotion failed" });
+    } finally {
+      setPromotingId(null);
+    }
+  }
 
   async function addSession(e: React.FormEvent) {
     e.preventDefault();
@@ -224,6 +243,16 @@ function Sessions() {
             <CardTitle>
               {s.name} {s.isCurrent && <Badge variant="success" className="ml-2">Current session</Badge>}
             </CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmPromote(s)}
+              disabled={promotingId === s.id}
+            >
+              {promotingId === s.id
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Promoting…</>
+                : <><GraduationCap className="h-3.5 w-3.5" /> Promote All Students</>}
+            </Button>
           </CardHeader>
           <CardContent>
             <Table>
@@ -249,6 +278,27 @@ function Sessions() {
           </CardContent>
         </Card>
       ))}
+
+      {/* Promotion confirmation dialog */}
+      <Dialog open={Boolean(confirmPromote)} onClose={() => setConfirmPromote(null)} title="Promote All Students">
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            This will move <strong>every active student</strong> in <strong>{confirmPromote?.name}</strong> up one class level for the next session:
+          </p>
+          <ul className="rounded-lg border bg-secondary/40 p-3 text-sm space-y-1">
+            <li>• Primary 1 → Primary 2, Primary 2 → Primary 3, etc.</li>
+            <li>• Students in the <strong>highest class</strong> will be marked <strong>Graduated</strong>.</li>
+            <li>• Promotion history is recorded for each student.</li>
+          </ul>
+          <p className="text-sm font-medium text-destructive">This cannot be undone. Make sure the session has ended before proceeding.</p>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => setConfirmPromote(null)}>Cancel</Button>
+            <Button onClick={() => confirmPromote && promoteAll(confirmPromote)}>
+              <GraduationCap className="h-4 w-4" /> Yes, promote all
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>

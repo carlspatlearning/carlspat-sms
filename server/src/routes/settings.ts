@@ -243,4 +243,57 @@ router.put(
   })
 );
 
+// POST /settings/sessions/:id/promote — bulk promote all active students to next class level
+router.post(
+  "/sessions/:id/promote",
+  authenticate,
+  authorize(...ADMINS),
+  asyncHandler(async (req, res) => {
+    const session = await prisma.academicSession.findUnique({ where: { id: req.params.id } });
+    if (!session) throw ApiError.notFound("Session not found");
+
+    const classes = await prisma.classRoom.findMany({
+      orderBy: [{ level: "asc" }, { section: "asc" }],
+    });
+    const byLevel = new Map<number, { id: string; name: string }>();
+    for (const c of classes) {
+      if (!byLevel.has(c.level)) byLevel.set(c.level, { id: c.id, name: c.name });
+    }
+
+    const students = await prisma.student.findMany({
+      where: { status: "ACTIVE", classRoomId: { not: null } },
+      include: { classRoom: { select: { id: true, name: true, level: true } } },
+    });
+
+    let promoted = 0, graduated = 0;
+
+    await prisma.$transaction(async (tx) => {
+      for (const student of students) {
+        if (!student.classRoom) continue;
+        const nextClass = byLevel.get(student.classRoom.level + 1);
+        if (nextClass) {
+          await tx.student.update({ where: { id: student.id }, data: { classRoomId: nextClass.id } });
+          await tx.promotion.create({
+            data: { studentId: student.id, fromClass: student.classRoom.name, toClass: nextClass.name, sessionName: session.name },
+          });
+          promoted++;
+        } else {
+          await tx.student.update({ where: { id: student.id }, data: { classRoomId: null, status: "GRADUATED" } });
+          await tx.promotion.create({
+            data: { studentId: student.id, fromClass: student.classRoom.name, toClass: "GRADUATED", sessionName: session.name },
+          });
+          graduated++;
+        }
+      }
+    });
+
+    audit(req, "session.promote_all", "AcademicSession", session.id, { promoted, graduated });
+    res.json({
+      success: true,
+      data: { promoted, graduated, total: students.length },
+      message: `${promoted} student(s) promoted, ${graduated} graduated.`,
+    });
+  })
+);
+
 export default router;
