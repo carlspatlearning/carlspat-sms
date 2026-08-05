@@ -72,6 +72,12 @@ enum ResourceType {
   OTHER
 }
 
+enum PromotionType {
+  PROMOTED
+  REPEATED
+  GRADUATED
+}
+
 // ──────────────────────────── School / settings ────────────────────────────
 
 model School {
@@ -384,12 +390,13 @@ model TermReport {
 }
 
 model Promotion {
-  id            String   @id @default(cuid())
+  id            String        @id @default(cuid())
   studentId     String
   fromClass     String
-  toClass       String // class name or "GRADUATED"
+  toClass       String
+  type          PromotionType @default(PROMOTED)
   sessionName   String
-  promotedAt    DateTime @default(now())
+  promotedAt    DateTime      @default(now())
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 }

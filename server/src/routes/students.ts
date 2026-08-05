@@ -108,6 +108,134 @@ router.post(
   })
 );
 
+// GET /students/promotion-review?classRoomId=&termId=
+// Returns students in a class with their average % for a term
+router.get(
+  "/promotion-review",
+  authorize(...ADMINS),
+  asyncHandler(async (req, res) => {
+    const { classRoomId, termId } = req.query as Record<string, string | undefined>;
+    if (!classRoomId) throw ApiError.badRequest("classRoomId is required");
+
+    const term = termId
+      ? await prisma.term.findUnique({ where: { id: termId } })
+      : await prisma.term.findFirst({ where: { isCurrent: true } });
+    if (!term) throw ApiError.badRequest("No term configured");
+
+    const [students, assessmentTypes, scoreSummary] = await Promise.all([
+      prisma.student.findMany({
+        where: { classRoomId, status: "ACTIVE" },
+        select: { id: true, firstName: true, lastName: true, admissionNo: true, passportUrl: true },
+        orderBy: { lastName: "asc" },
+      }),
+      prisma.assessmentType.findMany({ where: { isActive: true }, select: { maxScore: true } }),
+      prisma.score.groupBy({
+        by: ["studentId", "subjectId"],
+        where: { termId: term.id, student: { classRoomId } },
+        _sum: { score: true },
+      }),
+    ]);
+
+    const maxPerSubject = assessmentTypes.reduce((s, a) => s + a.maxScore, 0) || 100;
+
+    const subjectPercents = new Map<string, number[]>();
+    for (const row of scoreSummary) {
+      const pct = (Number(row._sum.score ?? 0) / maxPerSubject) * 100;
+      if (!subjectPercents.has(row.studentId)) subjectPercents.set(row.studentId, []);
+      subjectPercents.get(row.studentId)!.push(pct);
+    }
+
+    const data = students.map((s) => {
+      const pcts = subjectPercents.get(s.id) ?? [];
+      const avg = pcts.length
+        ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10
+        : null;
+      return { ...s, averagePercent: avg, subjectsScored: pcts.length };
+    });
+
+    res.json({ success: true, data, meta: { termId: term.id, termName: term.name } });
+  })
+);
+
+// POST /students/promote — per-student promotion decisions
+router.post(
+  "/promote",
+  authorize(...ADMINS),
+  validate(
+    z.object({
+      body: z.object({
+        decisions: z.array(
+          z.object({
+            studentId: z.string(),
+            action: z.enum(["PROMOTE", "REPEAT", "GRADUATE"]),
+            toClassRoomId: z.string().optional(),
+          })
+        ).min(1),
+      }),
+    })
+  ),
+  asyncHandler(async (req, res) => {
+    const { decisions } = req.body as {
+      decisions: { studentId: string; action: "PROMOTE" | "REPEAT" | "GRADUATE"; toClassRoomId?: string }[];
+    };
+
+    const session = await prisma.academicSession.findFirst({ where: { isCurrent: true } });
+    const students = await prisma.student.findMany({
+      where: { id: { in: decisions.map((d) => d.studentId) } },
+      include: { classRoom: true },
+    });
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+
+    const toClassIds = [...new Set(
+      decisions.filter((d) => d.action === "PROMOTE" && d.toClassRoomId).map((d) => d.toClassRoomId!)
+    )];
+    const destClasses = await prisma.classRoom.findMany({ where: { id: { in: toClassIds } } });
+    const classMap = new Map(destClasses.map((c) => [c.id, c]));
+
+    const ops = decisions.flatMap((d) => {
+      const student = studentMap.get(d.studentId);
+      if (!student) return [];
+      const fromClass = student.classRoom?.name ?? "—";
+      const sessionName = session?.name ?? "—";
+
+      if (d.action === "PROMOTE") {
+        const toClass = d.toClassRoomId ? classMap.get(d.toClassRoomId) : null;
+        if (!toClass) return [];
+        return [
+          prisma.student.update({ where: { id: d.studentId }, data: { classRoomId: toClass.id } }),
+          prisma.promotion.create({ data: { studentId: d.studentId, fromClass, toClass: toClass.name, type: "PROMOTED", sessionName } }),
+        ];
+      }
+      if (d.action === "REPEAT") {
+        return [
+          prisma.promotion.create({ data: { studentId: d.studentId, fromClass, toClass: fromClass, type: "REPEATED", sessionName } }),
+        ];
+      }
+      if (d.action === "GRADUATE") {
+        return [
+          prisma.student.update({ where: { id: d.studentId }, data: { classRoomId: null, status: StudentStatus.GRADUATED } }),
+          prisma.promotion.create({ data: { studentId: d.studentId, fromClass, toClass: "GRADUATED", type: "GRADUATED", sessionName } }),
+        ];
+      }
+      return [];
+    });
+
+    await prisma.$transaction(ops);
+
+    const counts = {
+      promoted: decisions.filter((d) => d.action === "PROMOTE").length,
+      repeated: decisions.filter((d) => d.action === "REPEAT").length,
+      graduated: decisions.filter((d) => d.action === "GRADUATE").length,
+    };
+    audit(req, "student.promotion_session", "Student", undefined, counts);
+    res.json({
+      success: true,
+      message: `Done: ${counts.promoted} promoted, ${counts.repeated} repeating, ${counts.graduated} graduated.`,
+      data: counts,
+    });
+  })
+);
+
 // GET /students/:id — staff, the student themself, or their parent
 router.get(
   "/:id",
@@ -157,59 +285,6 @@ router.delete(
     await prisma.student.delete({ where: { id: req.params.id } });
     audit(req, "student.delete", "Student", req.params.id);
     res.json({ success: true, message: "Student deleted" });
-  })
-);
-
-// POST /students/promote — bulk promotion / graduation at session end
-router.post(
-  "/promote",
-  authorize(...ADMINS),
-  validate(
-    z.object({
-      body: z.object({
-        studentIds: z.array(z.string()).min(1),
-        toClassRoomId: z.string().nullable(), // null = graduate
-      }),
-    })
-  ),
-  asyncHandler(async (req, res) => {
-    const { studentIds, toClassRoomId } = req.body as { studentIds: string[]; toClassRoomId: string | null };
-    const session = await prisma.academicSession.findFirst({ where: { isCurrent: true } });
-    const toClass = toClassRoomId
-      ? await prisma.classRoom.findUnique({ where: { id: toClassRoomId } })
-      : null;
-    if (toClassRoomId && !toClass) throw ApiError.notFound("Destination class not found");
-
-    const students = await prisma.student.findMany({
-      where: { id: { in: studentIds } },
-      include: { classRoom: true },
-    });
-
-    await prisma.$transaction(
-      students.flatMap((s) => [
-        prisma.student.update({
-          where: { id: s.id },
-          data: toClass
-            ? { classRoomId: toClass.id }
-            : { classRoomId: null, status: StudentStatus.GRADUATED },
-        }),
-        prisma.promotion.create({
-          data: {
-            studentId: s.id,
-            fromClass: s.classRoom?.name ?? "—",
-            toClass: toClass?.name ?? "GRADUATED",
-            sessionName: session?.name ?? "—",
-          },
-        }),
-      ])
-    );
-    audit(req, "student.promote", "Student", undefined, { count: students.length, to: toClass?.name ?? "GRADUATED" });
-    res.json({
-      success: true,
-      message: toClass
-        ? `${students.length} student(s) promoted to ${toClass.name}`
-        : `${students.length} student(s) graduated`,
-    });
   })
 );
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, TrendingUp } from "lucide-react";
 import { api, ApiResponse, Paginated } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { fullName, formatDate } from "@/lib/utils";
@@ -72,11 +72,18 @@ export default function StudentsPage() {
     <div>
       <PageHeader title="Students" description={data ? `${data.total} student(s)` : undefined}>
         {isAdmin && (
-          <Link href="/dashboard/students/new">
-            <Button>
-              <Plus className="h-4 w-4" /> Register Student
-            </Button>
-          </Link>
+          <>
+            <Link href="/dashboard/students/promote">
+              <Button variant="outline">
+                <TrendingUp className="h-4 w-4" /> Promotion
+              </Button>
+            </Link>
+            <Link href="/dashboard/students/new">
+              <Button>
+                <Plus className="h-4 w-4" /> Register Student
+              </Button>
+            </Link>
+          </>
         )}
       </PageHeader>
 
