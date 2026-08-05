@@ -7,6 +7,7 @@ import request from "supertest";
 
 const mockPrisma = {
   student: { findUnique: jest.fn() },
+  studentFeeItem: { findMany: jest.fn().mockResolvedValue([]) },
   feeStructure: { findMany: jest.fn() },
   feeWaiver: { aggregate: jest.fn() },
   payment: { aggregate: jest.fn() },
