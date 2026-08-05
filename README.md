@@ -1,4 +1,4 @@
-# Carlspat Private School — School Management System
+# Carlspat Private School — School Management System 
 
 > **Motto:** Emphasis on All-Round Development
 > Surulere, Old Keye Water Factory, Opposite Luku Panel Beater, Ora Road, Ido Ekiti, Ekiti State, Nigeria
