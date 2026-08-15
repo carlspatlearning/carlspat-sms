@@ -653,18 +653,51 @@ function FamilyFees() {
   const [children, setChildren] = useState<ChildBalance[]>([]);
   const [paying, setPaying] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: "success" | "warning" | "destructive"; text: string } | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
+  const loadBalances = useCallback(async () => {
+    try {
+      const r = await api.get<ApiResponse<{ currentTerm: Term | null; children?: ChildBalance[]; student?: ChildBalance & { className: string } }>>("/dashboard/me");
+      setTerm(r.data.currentTerm);
+      if (r.data.children) setChildren(r.data.children);
+      else if (r.data.student) setChildren([{ ...r.data.student, name: "My fees" } as ChildBalance]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load fee balances");
+    }
+  }, []);
+
+  // Paystack redirects back here with ?reference=… . Confirm it directly instead
+  // of trusting the webhook alone, so a missed webhook can't leave a parent who
+  // has already paid showing as a debtor with their report card locked.
   useEffect(() => {
-    api.get<ApiResponse<{ currentTerm: Term | null; children?: ChildBalance[]; student?: ChildBalance & { className: string } }>>("/dashboard/me")
+    const reference = new URLSearchParams(window.location.search).get("reference");
+    if (!reference) {
+      void loadBalances();
+      return;
+    }
+    setVerifying(true);
+    api.get<ApiResponse<{ status: string; receiptNo: string | null }>>(`/payments/paystack/verify?reference=${encodeURIComponent(reference)}`)
       .then((r) => {
-        setTerm(r.data.currentTerm);
-        if (r.data.children) setChildren(r.data.children);
-        else if (r.data.student) {
-          setChildren([{ ...r.data.student, name: "My fees" } as ChildBalance]);
+        if (r.data.status === "SUCCESS") {
+          setNotice({
+            type: "success",
+            text: `Payment confirmed. Receipt ${r.data.receiptNo ?? ""} — a copy has been emailed to you.`.trim(),
+          });
+        } else if (r.data.status === "FAILED") {
+          setNotice({ type: "destructive", text: "That payment did not go through. No money was taken — you can try again." });
+        } else {
+          setNotice({ type: "warning", text: "Your payment is still processing. Refresh in a moment; if you were debited it will clear shortly." });
         }
       })
-      .catch((e) => setError(e.message));
-  }, []);
+      .catch((e) => setNotice({ type: "destructive", text: e instanceof Error ? e.message : "Could not confirm the payment" }))
+      .finally(() => {
+        // Drop the reference so a refresh doesn't re-verify a stale transaction.
+        window.history.replaceState({}, "", window.location.pathname);
+        setVerifying(false);
+        void loadBalances();
+      });
+  }, [loadBalances]);
 
   async function payOnline(studentId: string, amount: number) {
     if (!term) return;
@@ -686,6 +719,8 @@ function FamilyFees() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="School Fees" description={term ? `${term.name}` : undefined} />
+      {verifying && <Alert className="mb-4">Confirming your payment…</Alert>}
+      {notice && <Alert variant={notice.type} className="mb-4">{notice.text}</Alert>}
       {error && <Alert variant="destructive" className="mb-4">{error}</Alert>}
 
       <div className="space-y-4">

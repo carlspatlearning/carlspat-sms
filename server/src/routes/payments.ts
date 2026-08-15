@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { z } from "zod";
-import { PaymentMethod, PaymentStatus, Role } from "@prisma/client";
+import { Prisma, PaymentMethod, PaymentStatus, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
@@ -43,6 +43,44 @@ async function notifyParentOfPayment(paymentId: string) {
   }
 }
 
+/**
+ * Confirm a gateway payment: assign its receipt number, flip PENDING → SUCCESS
+ * and email the parent.
+ *
+ * Both the gateway webhook and the browser callback (/paystack/verify) call
+ * this, so it must be idempotent: an already-confirmed payment is returned
+ * untouched rather than credited or emailed twice. The conditional updateMany
+ * is what makes that safe — whichever path arrives second matches no rows.
+ */
+async function confirmGatewayPayment(reference: string) {
+  const payment = await prisma.payment.findUnique({ where: { reference } });
+  if (!payment) return null;
+  if (payment.status === PaymentStatus.SUCCESS) return payment;
+
+  // nextReceiptNo() is a max+1 read, so a webhook and a callback racing can pick
+  // the same number; the unique index rejects the loser, which retries.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const result = await prisma.payment.updateMany({
+        where: { id: payment.id, status: PaymentStatus.PENDING },
+        data: {
+          status: PaymentStatus.SUCCESS,
+          paidAt: new Date(),
+          receiptNo: payment.receiptNo ?? (await nextReceiptNo()),
+        },
+      });
+      // count === 0 means the other path confirmed it first — nothing more to do.
+      if (result.count > 0) await notifyParentOfPayment(payment.id);
+      return prisma.payment.findUnique({ where: { id: payment.id } });
+    } catch (e) {
+      const isDuplicateReceipt =
+        e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
+      if (!isDuplicateReceipt || attempt === 4) throw e;
+    }
+  }
+  return null;
+}
+
 // ── Webhooks (mounted with express.raw — see app.ts) ────────────────────────
 
 // POST /payments/webhooks/paystack
@@ -57,15 +95,7 @@ router.post(
     }
     const event = JSON.parse(raw.toString("utf8"));
     if (event.event === "charge.success") {
-      const ref = event.data.reference as string;
-      const payment = await prisma.payment.findUnique({ where: { reference: ref } });
-      if (payment && payment.status === PaymentStatus.PENDING) {
-        await prisma.payment.update({
-          where: { id: payment.id },
-          data: { status: PaymentStatus.SUCCESS, paidAt: new Date() },
-        });
-        await notifyParentOfPayment(payment.id);
-      }
+      await confirmGatewayPayment(event.data.reference as string);
     }
     res.json({ received: true });
   })
@@ -81,15 +111,7 @@ router.post(
     }
     const event = JSON.parse((req.body as Buffer).toString("utf8"));
     if (event.event === "charge.completed" && event.data?.status === "successful") {
-      const ref = event.data.tx_ref as string;
-      const payment = await prisma.payment.findUnique({ where: { reference: ref } });
-      if (payment && payment.status === PaymentStatus.PENDING) {
-        await prisma.payment.update({
-          where: { id: payment.id },
-          data: { status: PaymentStatus.SUCCESS, paidAt: new Date() },
-        });
-        await notifyParentOfPayment(payment.id);
-      }
+      await confirmGatewayPayment(event.data.tx_ref as string);
     }
     res.json({ received: true });
   })
@@ -226,6 +248,9 @@ router.get(
     });
     if (!payment) throw ApiError.notFound("Payment not found");
     await assertCanAccessStudent(req, payment.studentId);
+    if (!payment.receiptNo || payment.status !== PaymentStatus.SUCCESS) {
+      throw ApiError.badRequest("A receipt is only issued once the payment has been confirmed.");
+    }
 
     const [school, balance] = await Promise.all([
       prisma.school.findFirst(),
@@ -286,7 +311,7 @@ router.post(
 
     await prisma.payment.create({
       data: {
-        receiptNo: await nextReceiptNo(),
+        // receiptNo stays null until the gateway confirms — see confirmGatewayPayment
         studentId,
         termId,
         amount,
@@ -298,6 +323,76 @@ router.post(
     });
     audit(req, "payment.paystack_init", "Payment", reference, { amount });
     res.json({ success: true, data: { authorizationUrl: initData.data.authorization_url, reference } });
+  })
+);
+
+// GET /payments/paystack/verify?reference= — confirm from the browser callback.
+//
+// The webhook is the primary confirmation path, but it can be missed (deploy,
+// restart, delivery failure). Without a second path the parent has been debited
+// while the portal still shows them owing and keeps the report card locked, so
+// the fees page calls this when Paystack redirects the parent back.
+router.get(
+  "/paystack/verify",
+  validate(z.object({ query: z.object({ reference: z.string().min(1) }) })),
+  asyncHandler(async (req, res) => {
+    if (!env.paystackSecret) throw ApiError.badRequest("Online payment (Paystack) is not configured");
+    const reference = req.query.reference as string;
+
+    const payment = await prisma.payment.findUnique({ where: { reference } });
+    if (!payment) throw ApiError.notFound("Payment not found");
+    await assertCanAccessStudent(req, payment.studentId);
+
+    if (payment.status === PaymentStatus.SUCCESS) {
+      return res.json({
+        success: true,
+        data: { status: payment.status, receiptNo: payment.receiptNo, amount: Number(payment.amount) },
+      });
+    }
+
+    const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      headers: { Authorization: `Bearer ${env.paystackSecret}` },
+    });
+    const verifyData = (await verifyRes.json()) as {
+      status: boolean;
+      message?: string;
+      data?: { status: string; amount: number };
+    };
+    if (!verifyRes.ok || !verifyData.status || !verifyData.data) {
+      throw ApiError.badRequest(`Paystack: ${verifyData.message ?? "could not verify payment"}`);
+    }
+
+    const gatewayStatus = verifyData.data.status;
+    if (gatewayStatus === "success") {
+      // We fixed the amount when initializing, so the customer cannot have
+      // changed it. A mismatch means something is wrong — refuse to credit it
+      // and let the bursar reconcile by hand rather than book a wrong figure.
+      const expectedKobo = Math.round(Number(payment.amount) * 100);
+      if (verifyData.data.amount !== expectedKobo) {
+        console.error(
+          `Paystack amount mismatch on ${reference}: charged ${verifyData.data.amount}, expected ${expectedKobo}`
+        );
+        throw ApiError.badRequest(
+          "The amount confirmed by Paystack does not match this payment. Please contact the bursar's office."
+        );
+      }
+      const confirmed = await confirmGatewayPayment(reference);
+      audit(req, "payment.paystack_verify", "Payment", payment.id, { amount: Number(payment.amount) });
+      return res.json({
+        success: true,
+        data: { status: PaymentStatus.SUCCESS, receiptNo: confirmed?.receiptNo ?? null, amount: Number(payment.amount) },
+      });
+    }
+
+    // "abandoned"/"ongoing" stay PENDING so a retry can still complete them.
+    if (gatewayStatus === "failed" || gatewayStatus === "reversed") {
+      await prisma.payment.updateMany({
+        where: { id: payment.id, status: PaymentStatus.PENDING },
+        data: { status: PaymentStatus.FAILED },
+      });
+      return res.json({ success: true, data: { status: PaymentStatus.FAILED, receiptNo: null, amount: Number(payment.amount) } });
+    }
+    res.json({ success: true, data: { status: PaymentStatus.PENDING, receiptNo: null, amount: Number(payment.amount) } });
   })
 );
 
@@ -333,7 +428,7 @@ router.post(
 
     await prisma.payment.create({
       data: {
-        receiptNo: await nextReceiptNo(),
+        // receiptNo stays null until the gateway confirms — see confirmGatewayPayment
         studentId,
         termId,
         amount,

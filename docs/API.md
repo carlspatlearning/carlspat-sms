@@ -117,12 +117,27 @@ globally when a password changes (`tokenVersion` bump).
 | GET | `/fees/debtors?termId=&classRoomId=` | FEE_MANAGERS | Outstanding fees report |
 | GET | `/payments?studentId=&termId=&q=` | FEE_MANAGERS or own | Payment history |
 | POST | `/payments` | FEE_MANAGERS | Record offline payment → receipt no `CPS-RCP-<year>-00001`, email to parent |
-| GET | `/payments/:id/receipt` | staff / own | PDF receipt |
-| POST | `/payments/paystack/init` | parent/own | → `{authorizationUrl}`; confirmed by webhook |
+| GET | `/payments/:id/receipt` | staff / own | PDF receipt — 400 until the payment is confirmed |
+| POST | `/payments/paystack/init` | parent/own | → `{authorizationUrl, reference}`; creates a PENDING payment |
+| GET | `/payments/paystack/verify?reference=` | parent/own | Confirms from the browser callback → `{status, receiptNo, amount}`. Idempotent; safe alongside the webhook |
 | POST | `/payments/flutterwave/init` | parent/own | → `{authorizationUrl}` |
 | POST | `/payments/webhooks/paystack` | signature | HMAC-SHA512 `x-paystack-signature` over raw body |
 | POST | `/payments/webhooks/flutterwave` | signature | `verif-hash` header |
 | GET | `/payments/reports/summary?termId=` | FEE_MANAGERS | Totals, by method, recent payments |
+
+### Online payment lifecycle
+
+`init` creates the payment as **PENDING with no receipt number**. It becomes SUCCESS
+through either the gateway webhook or `paystack/verify` — whichever arrives first;
+both are idempotent, so the parent is credited and emailed exactly once.
+
+**Receipt numbers are assigned at confirmation, not at init**, so an abandoned
+checkout leaves no gap in the `CPS-RCP-` sequence. A PENDING payment therefore has
+`receiptNo: null` and cannot produce a receipt PDF.
+
+Only SUCCESS payments count toward a student's paid total, so a pending checkout
+never unlocks a report card. `verify` refuses to confirm if the amount Paystack
+reports differs from the initialized amount — the bursar reconciles those by hand.
 
 ## Communication
 

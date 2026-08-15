@@ -17,7 +17,7 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table";
 
 interface PaymentRow {
   id: string;
-  receiptNo: string;
+  receiptNo: string | null; // null while an online payment is still pending
   amount: string;
   method: string;
   status: string;
@@ -190,7 +190,7 @@ export default function PaymentsPage() {
         <TBody>
           {data?.items.map((p) => (
             <TR key={p.id}>
-              <TD className="font-mono text-xs">{p.receiptNo}</TD>
+              <TD className="font-mono text-xs">{p.receiptNo ?? <span className="text-muted-foreground">—</span>}</TD>
               <TD>
                 <span className="font-medium">{p.student.firstName} {p.student.lastName}</span>
                 <span className="block text-xs text-muted-foreground">{p.student.classRoom?.name}</span>
