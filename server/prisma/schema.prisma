@@ -468,7 +468,9 @@ model StudentFeeItem {
 
 model Payment {
   id           String        @id @default(cuid())
-  receiptNo    String        @unique
+  // Null until the payment is confirmed — an abandoned online checkout must not
+  // consume a number and leave a gap in the bursar's receipt book.
+  receiptNo    String?       @unique
   studentId    String
   termId       String
   amount       Decimal       @db.Decimal(12, 2)

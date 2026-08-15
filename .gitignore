@@ -10,3 +10,9 @@ coverage/
 .DS_Store
 uploads/
 server/prisma/dev.db
+
+# Database credentials and dumps — never commit these
+.backup-conn
+*.backup-conn
+*.sql.gz
+*-backup-*.sql
