@@ -8,6 +8,7 @@ import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
 import { audit } from "../middleware/audit";
 import { getPagination, paginated } from "../utils/pagination";
+import { expensesInTerm } from "../utils/expenseScope";
 
 const router = Router();
 router.use(authenticate);
@@ -165,7 +166,7 @@ router.get(
 
     const rows = await prisma.expense.groupBy({
       by: ["categoryId"],
-      where: { termId: term.id },
+      where: expensesInTerm(term),
       _sum: { amount: true },
       _count: { _all: true },
     });

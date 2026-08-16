@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../middleware/error";
 import { authenticate, authorize, STAFF } from "../middleware/auth";
 import { getFeeBalance } from "../services/feeService";
+import { expensesInTerm } from "../utils/expenseScope";
 
 const router = Router();
 router.use(authenticate);
@@ -38,43 +39,83 @@ router.get(
     let feeStats: { expected: number; collected: number; waived: number; outstanding: number; collectionRate: number } | null = null;
     let finance: { income: number; expenditure: number; balance: number } | null = null;
     if (term && canSeeFinance) {
-      const [collected, waivedAgg, expenditureAgg] = await Promise.all([
-        prisma.payment.aggregate({
-          where: { termId: term.id, status: PaymentStatus.SUCCESS },
-          _sum: { amount: true },
-        }),
-        prisma.feeWaiver.aggregate({
-          where: { termId: term.id },
-          _sum: { amount: true },
-        }),
-        prisma.expense.aggregate({
-          where: { termId: term.id },
-          _sum: { amount: true },
-        }),
-      ]);
-      // Expected = Σ per-student class fee structures
       const students = await prisma.student.findMany({
-        where: { status: "ACTIVE", classRoomId: { not: null } },
-        select: { classRoomId: true },
+        where: { status: "ACTIVE" },
+        select: { id: true, classRoomId: true },
       });
-      const structures = await prisma.feeStructure.groupBy({
-        by: ["classRoomId"],
-        where: { termId: term.id },
-        _sum: { amount: true },
-      });
+      const studentIds = students.map((s) => s.id);
+
+      const [structures, itemsByStudent, waiversByStudent, paidByStudent, allPaid, expenditureAgg] =
+        await Promise.all([
+          prisma.feeStructure.groupBy({
+            by: ["classRoomId"],
+            where: { termId: term.id },
+            _sum: { amount: true },
+          }),
+          // Per-student billing overrides the class structure, exactly as
+          // getFeeBalance does — otherwise students on bespoke fees are costed wrong.
+          prisma.studentFeeItem.groupBy({
+            by: ["studentId"],
+            where: { termId: term.id, studentId: { in: studentIds } },
+            _sum: { amount: true },
+          }),
+          prisma.feeWaiver.groupBy({
+            by: ["studentId"],
+            where: { termId: term.id, studentId: { in: studentIds } },
+            _sum: { amount: true },
+          }),
+          prisma.payment.groupBy({
+            by: ["studentId"],
+            where: { termId: term.id, status: PaymentStatus.SUCCESS, studentId: { in: studentIds } },
+            _sum: { amount: true },
+          }),
+          // Cash actually received this term, including from students who have
+          // since graduated. This is income, not fee collection.
+          prisma.payment.aggregate({
+            where: { termId: term.id, status: PaymentStatus.SUCCESS },
+            _sum: { amount: true },
+          }),
+          prisma.expense.aggregate({
+            where: expensesInTerm(term),
+            _sum: { amount: true },
+          }),
+        ]);
+
       const perClass = new Map(structures.map((s) => [s.classRoomId, Number(s._sum.amount ?? 0)]));
-      const expected = students.reduce((sum, s) => sum + (perClass.get(s.classRoomId!) ?? 0), 0);
-      const collectedNum = Number(collected._sum.amount ?? 0);
-      const waived = Number(waivedAgg._sum.amount ?? 0);
+      const sumBy = (rows: { studentId: string; _sum: { amount: unknown } }[]) =>
+        new Map(rows.map((r) => [r.studentId, Number(r._sum.amount ?? 0)]));
+      const ownItems = sumBy(itemsByStudent);
+      const waivedFor = sumBy(waiversByStudent);
+      const paidFor = sumBy(paidByStudent);
+
+      let expected = 0;
+      let waived = 0;
+      let collected = 0;
+      let outstanding = 0;
+      for (const s of students) {
+        const billed = ownItems.get(s.id) ?? (s.classRoomId ? perClass.get(s.classRoomId) ?? 0 : 0);
+        const discount = waivedFor.get(s.id) ?? 0;
+        const paid = paidFor.get(s.id) ?? 0;
+        expected += billed;
+        waived += discount;
+        collected += paid;
+        // Floor each student at zero before summing: a family in credit must not
+        // cancel out a family in debt, or the school looks fully paid up when
+        // dozens still owe.
+        outstanding += Math.max(0, billed - discount - paid);
+      }
+
+      const collectable = expected - waived;
       const expenditure = Number(expenditureAgg._sum.amount ?? 0);
+      const income = Number(allPaid._sum.amount ?? 0);
       feeStats = {
         expected,
-        collected: collectedNum,
+        collected,
         waived,
-        outstanding: Math.max(0, expected - waived - collectedNum),
-        collectionRate: expected ? Math.round((collectedNum / expected) * 1000) / 10 : 0,
+        outstanding,
+        collectionRate: collectable > 0 ? Math.round((collected / collectable) * 1000) / 10 : 0,
       };
-      finance = { income: collectedNum, expenditure, balance: collectedNum - expenditure };
+      finance = { income, expenditure, balance: income - expenditure };
     }
 
     // Academic performance: average score % per class for the current term
