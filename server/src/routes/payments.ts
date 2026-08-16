@@ -7,7 +7,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent } from "../middleware/auth";
-import { requireActiveSchool } from "../middleware/tenant";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { nextReceiptNo } from "../utils/ids";
 import { getFeeBalance } from "../services/feeService";
@@ -20,12 +20,28 @@ const router = Router();
 
 const FEE_MANAGERS: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
 
+/**
+ * The Paystack secret to use for one school.
+ *
+ * Each school takes fees into its own Paystack account, so the key belongs to
+ * the school rather than the server. The server-wide key remains as a fallback
+ * for the founding school, which was set up before schools had their own.
+ */
+async function paystackSecretFor(schoolId: string): Promise<string> {
+  const school = await prisma.school.findUnique({
+    where: { id: schoolId },
+    select: { paystackSecretKey: true },
+  });
+  return school?.paystackSecretKey || env.paystackSecret;
+}
+
 async function notifyParentOfPayment(paymentId: string) {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     include: {
       student: { include: { parent: { include: { user: true } } } },
       term: { include: { session: true } },
+      school: { select: { name: true } },
     },
   });
   const parentEmail = payment?.student.parent?.user.email;
@@ -39,7 +55,7 @@ async function notifyParentOfPayment(paymentId: string) {
        ${payment.student.firstName} ${payment.student.lastName} (${payment.student.admissionNo})
        — ${payment.term.name}, ${payment.term.session.name}.</p>
        <p>Outstanding balance: <b>NGN ${balance.outstanding.toLocaleString()}</b></p>
-       <p>Thank you.<br/>Carlspat Private School</p>`
+       <p>Thank you.<br/>${payment.school.name}</p>`
     ).catch((e) => console.error("Payment email failed:", e));
   }
 }
@@ -67,7 +83,7 @@ async function confirmGatewayPayment(reference: string) {
         data: {
           status: PaymentStatus.SUCCESS,
           paidAt: new Date(),
-          receiptNo: payment.receiptNo ?? (await nextReceiptNo()),
+          receiptNo: payment.receiptNo ?? (await nextReceiptNo(payment.schoolId)),
         },
       });
       // count === 0 means the other path confirmed it first — nothing more to do.
@@ -90,13 +106,33 @@ router.post(
   asyncHandler(async (req, res) => {
     const signature = req.headers["x-paystack-signature"] as string | undefined;
     const raw = req.body as Buffer;
-    const expected = crypto.createHmac("sha512", env.paystackSecret).update(raw).digest("hex");
-    if (!signature || !env.paystackSecret || signature !== expected) {
+    if (!signature) throw ApiError.unauthorized("Invalid webhook signature");
+
+    // With a key per school, the right key has to be chosen before the signature
+    // can be checked. The body is untrusted at this point, so it is used only to
+    // read the reference and look up which school the payment belongs to — a
+    // forged reference simply selects a key that then fails to verify.
+    const event = JSON.parse(raw.toString("utf8"));
+    const reference = event?.data?.reference as string | undefined;
+    if (!reference) return res.json({ received: true });
+
+    const payment = await prisma.payment.findUnique({
+      where: { reference },
+      select: { schoolId: true },
+    });
+    // Unknown reference: acknowledge so Paystack stops retrying, but do nothing.
+    if (!payment) return res.json({ received: true });
+
+    const secret = await paystackSecretFor(payment.schoolId);
+    const expected = secret
+      ? crypto.createHmac("sha512", secret).update(raw).digest("hex")
+      : null;
+    if (!expected || signature !== expected) {
       throw ApiError.unauthorized("Invalid webhook signature");
     }
-    const event = JSON.parse(raw.toString("utf8"));
+
     if (event.event === "charge.success") {
-      await confirmGatewayPayment(event.data.reference as string);
+      await confirmGatewayPayment(reference);
     }
     res.json({ received: true });
   })
@@ -134,6 +170,7 @@ router.get(
     }
     const pg = getPagination(req);
     const where = {
+      schoolId: currentSchoolId(req),
       ...(studentId ? { studentId } : {}),
       ...(termId ? { termId } : {}),
       ...(q
@@ -182,10 +219,21 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
+    const { studentId, termId } = req.body as { studentId: string; termId: string };
+
+    const [student, term] = await Promise.all([
+      prisma.student.findUnique({ where: { id: studentId }, select: { schoolId: true } }),
+      prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } }),
+    ]);
+    if (!student || student.schoolId !== schoolId) throw ApiError.notFound("Student not found");
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
+
     const payment = await prisma.payment.create({
       data: {
         ...req.body,
-        receiptNo: await nextReceiptNo(),
+        schoolId,
+        receiptNo: await nextReceiptNo(schoolId),
         status: PaymentStatus.SUCCESS,
         recordedById: req.auth!.sub,
       },
@@ -215,7 +263,7 @@ router.patch(
   ),
   asyncHandler(async (req, res) => {
     const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
-    if (!payment) throw ApiError.notFound("Payment not found");
+    if (!payment || payment.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Payment not found");
     if (payment.gateway) {
       throw ApiError.badRequest(
         "Online payments confirmed by the payment gateway cannot be edited. Record a correcting entry instead."
@@ -247,14 +295,17 @@ router.get(
         recordedBy: { select: { firstName: true, lastName: true } },
       },
     });
-    if (!payment) throw ApiError.notFound("Payment not found");
+    const schoolId = currentSchoolId(req);
+    if (!payment || payment.schoolId !== schoolId) throw ApiError.notFound("Payment not found");
     await assertCanAccessStudent(req, payment.studentId);
     if (!payment.receiptNo || payment.status !== PaymentStatus.SUCCESS) {
       throw ApiError.badRequest("A receipt is only issued once the payment has been confirmed.");
     }
 
+    // The receipt carries the school's own name, logo and stamp, so it must be
+    // this payment's school rather than whichever school happens to be first.
     const [school, balance] = await Promise.all([
-      prisma.school.findFirst(),
+      prisma.school.findUnique({ where: { id: payment.schoolId } }),
       getFeeBalance(payment.studentId, payment.termId),
     ]);
     if (!school) throw ApiError.notFound("School not configured");
@@ -291,9 +342,14 @@ router.post(
   "/paystack/init",
   validate(z.object({ body: z.object({ studentId: z.string(), termId: z.string(), amount: z.number().positive() }) })),
   asyncHandler(async (req, res) => {
-    if (!env.paystackSecret) throw ApiError.badRequest("Online payment (Paystack) is not configured");
+    const schoolId = currentSchoolId(req);
+    const secret = await paystackSecretFor(schoolId);
+    if (!secret) throw ApiError.badRequest("Online payment (Paystack) is not configured");
     const { studentId, termId, amount } = req.body;
     await assertCanAccessStudent(req, studentId);
+
+    const term = await prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
 
     // Parents choose how much to pay (fees are commonly settled in instalments),
     // so the amount arrives from the browser and cannot be trusted. Bound it
@@ -312,11 +368,11 @@ router.post(
     }
 
     const user = await prisma.user.findUnique({ where: { id: req.auth!.sub } });
-    const reference = `CPS-PSK-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const reference = `PSK-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
 
     const initRes = await fetch("https://api.paystack.co/transaction/initialize", {
       method: "POST",
-      headers: { Authorization: `Bearer ${env.paystackSecret}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         email: user!.email,
         amount: Math.round(amount * 100), // kobo
@@ -333,6 +389,7 @@ router.post(
     await prisma.payment.create({
       data: {
         // receiptNo stays null until the gateway confirms — see confirmGatewayPayment
+        schoolId,
         studentId,
         termId,
         amount,
@@ -357,12 +414,16 @@ router.get(
   "/paystack/verify",
   validate(z.object({ query: z.object({ reference: z.string().min(1) }) })),
   asyncHandler(async (req, res) => {
-    if (!env.paystackSecret) throw ApiError.badRequest("Online payment (Paystack) is not configured");
+    const schoolId = currentSchoolId(req);
     const reference = req.query.reference as string;
 
     const payment = await prisma.payment.findUnique({ where: { reference } });
-    if (!payment) throw ApiError.notFound("Payment not found");
+    if (!payment || payment.schoolId !== schoolId) throw ApiError.notFound("Payment not found");
     await assertCanAccessStudent(req, payment.studentId);
+
+    // Verified against this payment's own school key, not the server's.
+    const secret = await paystackSecretFor(payment.schoolId);
+    if (!secret) throw ApiError.badRequest("Online payment (Paystack) is not configured");
 
     if (payment.status === PaymentStatus.SUCCESS) {
       return res.json({
@@ -372,7 +433,7 @@ router.get(
     }
 
     const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-      headers: { Authorization: `Bearer ${env.paystackSecret}` },
+      headers: { Authorization: `Bearer ${secret}` },
     });
     const verifyData = (await verifyRes.json()) as {
       status: boolean;
@@ -423,11 +484,18 @@ router.post(
   validate(z.object({ body: z.object({ studentId: z.string(), termId: z.string(), amount: z.number().positive() }) })),
   asyncHandler(async (req, res) => {
     if (!env.flutterwave.secret) throw ApiError.badRequest("Online payment (Flutterwave) is not configured");
+    const schoolId = currentSchoolId(req);
     const { studentId, termId, amount } = req.body;
     await assertCanAccessStudent(req, studentId);
 
+    const [term, school] = await Promise.all([
+      prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } }),
+      prisma.school.findUnique({ where: { id: schoolId }, select: { name: true } }),
+    ]);
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
+
     const user = await prisma.user.findUnique({ where: { id: req.auth!.sub } });
-    const txRef = `CPS-FLW-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const txRef = `FLW-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
 
     const initRes = await fetch("https://api.flutterwave.com/v3/payments", {
       method: "POST",
@@ -439,7 +507,7 @@ router.post(
         redirect_url: env.paymentCallbackUrl,
         customer: { email: user!.email, name: `${user!.firstName} ${user!.lastName}` },
         meta: { studentId, termId },
-        customizations: { title: "Carlspat Private School — School Fees" },
+        customizations: { title: `${school?.name ?? "School"} — School Fees` },
       }),
     });
     const initData = (await initRes.json()) as { status: string; data?: { link: string }; message?: string };
@@ -450,6 +518,7 @@ router.post(
     await prisma.payment.create({
       data: {
         // receiptNo stays null until the gateway confirms — see confirmGatewayPayment
+        schoolId,
         studentId,
         termId,
         amount,
@@ -469,26 +538,30 @@ router.get(
   "/reports/summary",
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const termId = req.query.termId as string | undefined;
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No current term configured");
 
+    // Term ids are unique across schools, so termId alone would usually be
+    // enough — but this is the school's money report, and it states the school
+    // filter rather than relying on ids never colliding.
     const [byMethod, total, recent] = await Promise.all([
       prisma.payment.groupBy({
         by: ["method"],
-        where: { termId: term.id, status: PaymentStatus.SUCCESS },
+        where: { schoolId, termId: term.id, status: PaymentStatus.SUCCESS },
         _sum: { amount: true },
         _count: { _all: true },
       }),
       prisma.payment.aggregate({
-        where: { termId: term.id, status: PaymentStatus.SUCCESS },
+        where: { schoolId, termId: term.id, status: PaymentStatus.SUCCESS },
         _sum: { amount: true },
         _count: { _all: true },
       }),
       prisma.payment.findMany({
-        where: { termId: term.id, status: PaymentStatus.SUCCESS },
+        where: { schoolId, termId: term.id, status: PaymentStatus.SUCCESS },
         include: { student: { select: { firstName: true, lastName: true, admissionNo: true } } },
         orderBy: { paidAt: "desc" },
         take: 10,

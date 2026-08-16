@@ -6,7 +6,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
-import { requireActiveSchool } from "../middleware/tenant";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { getPagination, paginated } from "../utils/pagination";
 import { expensesInTerm } from "../utils/expenseScope";
@@ -21,8 +21,11 @@ const FINANCE: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
 router.get(
   "/categories",
   authorize(...FINANCE),
-  asyncHandler(async (_req, res) => {
-    const cats = await prisma.expenseCategory.findMany({ orderBy: { name: "asc" } });
+  asyncHandler(async (req, res) => {
+    const cats = await prisma.expenseCategory.findMany({
+      where: { schoolId: currentSchoolId(req) },
+      orderBy: { name: "asc" },
+    });
     res.json({ success: true, data: cats });
   })
 );
@@ -32,9 +35,9 @@ router.post(
   authorize(...ADMINS),
   validate(z.object({ body: z.object({ name: z.string().min(2), description: z.string().optional() }) })),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
-    const cat = await prisma.expenseCategory.create({ data: { ...req.body, schoolId: school.id } });
+    const cat = await prisma.expenseCategory.create({
+      data: { ...req.body, schoolId: currentSchoolId(req) },
+    });
     audit(req, "expense.category_create", "ExpenseCategory", cat.id);
     res.status(201).json({ success: true, data: cat });
   })
@@ -45,6 +48,9 @@ router.put(
   authorize(...ADMINS),
   validate(z.object({ body: z.object({ name: z.string().min(2).optional(), description: z.string().optional() }) })),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.expenseCategory.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Category not found");
+
     const cat = await prisma.expenseCategory.update({ where: { id: req.params.id }, data: req.body });
     audit(req, "expense.category_update", "ExpenseCategory", cat.id);
     res.json({ success: true, data: cat });
@@ -55,6 +61,9 @@ router.delete(
   "/categories/:id",
   authorize(...ADMINS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.expenseCategory.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Category not found");
+
     const count = await prisma.expense.count({ where: { categoryId: req.params.id } });
     if (count > 0) throw ApiError.conflict(`Cannot delete: ${count} expense(s) use this category`);
     await prisma.expenseCategory.delete({ where: { id: req.params.id } });
@@ -72,6 +81,7 @@ router.get(
     const pg = getPagination(req);
     const { termId, categoryId } = req.query as Record<string, string | undefined>;
     const where = {
+      schoolId: currentSchoolId(req),
       ...(termId ? { termId } : {}),
       ...(categoryId ? { categoryId } : {}),
     };
@@ -108,10 +118,13 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    const schoolId = currentSchoolId(req);
+    const { categoryId } = req.body as { categoryId: string };
+    const category = await prisma.expenseCategory.findUnique({ where: { id: categoryId }, select: { schoolId: true } });
+    if (!category || category.schoolId !== schoolId) throw ApiError.notFound("Category not found");
+
     const expense = await prisma.expense.create({
-      data: { ...req.body, schoolId: school.id, recordedById: req.auth!.sub },
+      data: { ...req.body, schoolId, recordedById: req.auth!.sub },
       include: { category: true, recordedBy: { select: { firstName: true, lastName: true } } },
     });
     audit(req, "expense.create", "Expense", expense.id, { amount: req.body.amount });
@@ -134,6 +147,9 @@ router.put(
     })
   ),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.expense.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Expense not found");
+
     const expense = await prisma.expense.update({
       where: { id: req.params.id },
       data: req.body,
@@ -148,6 +164,9 @@ router.delete(
   "/:id",
   authorize(...ADMINS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.expense.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Expense not found");
+
     await prisma.expense.delete({ where: { id: req.params.id } });
     audit(req, "expense.delete", "Expense", req.params.id);
     res.json({ success: true, message: "Expense deleted" });
@@ -159,19 +178,22 @@ router.get(
   "/summary",
   authorize(...FINANCE),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const termId = req.query.termId as string | undefined;
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No current term configured");
 
     const rows = await prisma.expense.groupBy({
       by: ["categoryId"],
-      where: expensesInTerm(term),
+      where: { schoolId, ...expensesInTerm(term) },
       _sum: { amount: true },
       _count: { _all: true },
     });
-    const cats = await prisma.expenseCategory.findMany({ where: { id: { in: rows.map((r) => r.categoryId) } } });
+    const cats = await prisma.expenseCategory.findMany({
+      where: { schoolId, id: { in: rows.map((r) => r.categoryId) } },
+    });
     const byId = new Map(cats.map((c) => [c.id, c.name]));
     const total = rows.reduce((s, r) => s + Number(r._sum.amount ?? 0), 0);
     res.json({
