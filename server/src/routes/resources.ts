@@ -7,7 +7,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
-import { requireActiveSchool } from "../middleware/tenant";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { uploadDocument, UploadResult } from "../services/storage";
 
@@ -63,14 +63,17 @@ router.post(
     const { title, description, type, classRoomId } = req.body as {
       title: string; description?: string; type: ResourceType; classRoomId?: string;
     };
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.badRequest("School not configured");
+    const schoolId = currentSchoolId(req);
+    if (classRoomId) {
+      const cls = await prisma.classRoom.findUnique({ where: { id: classRoomId }, select: { schoolId: true } });
+      if (!cls || cls.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+    }
 
     const uploaded = withAbsoluteUrl(req, await uploadDocument(req.file.buffer, "resources", req.file.originalname));
 
     const resource = await prisma.resource.create({
       data: {
-        schoolId: school.id,
+        schoolId,
         title,
         description: description ?? null,
         type,
@@ -115,7 +118,7 @@ router.get(
     const { classId, type } = req.query as Record<string, string | undefined>;
 
     // Staff can filter by classId/type; parents/students get server-enforced class filter only
-    const where: Record<string, unknown> = classRoomFilter ?? {};
+    const where: Record<string, unknown> = { schoolId: currentSchoolId(req), ...(classRoomFilter ?? {}) };
     if (!classRoomFilter) {
       if (classId) where.classRoomId = classId;
     }
@@ -143,7 +146,7 @@ router.delete(
   authorize(Role.TEACHER, ...ADMINS),
   asyncHandler(async (req, res) => {
     const resource = await prisma.resource.findUnique({ where: { id: req.params.id } });
-    if (!resource) throw ApiError.notFound("Resource not found");
+    if (!resource || resource.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Resource not found");
     if (req.auth!.role === Role.TEACHER && resource.uploadedById !== req.auth!.sub) {
       throw ApiError.forbidden("You can only delete your own uploads");
     }

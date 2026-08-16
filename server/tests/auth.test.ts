@@ -8,6 +8,9 @@ const mockPrisma = {
   user: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
   classRoom: { findMany: jest.fn().mockResolvedValue([]) },
   auditLog: { create: jest.fn().mockResolvedValue({}) },
+  // Every authenticated school route now loads its school to check the
+  // subscription is live before doing anything else.
+  school: { findUnique: jest.fn() },
 };
 jest.mock("../src/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -32,7 +35,19 @@ const adminUser = {
   tokenVersion: 0,
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockPrisma.classRoom.findMany.mockResolvedValue([]);
+  mockPrisma.auditLog.create.mockResolvedValue({});
+  mockPrisma.user.update.mockResolvedValue({});
+  mockPrisma.school.findUnique.mockResolvedValue({
+    id: "school-1",
+    name: "Carlspat Private School",
+    isActive: true,
+    subscriptionStatus: "ACTIVE",
+    subscriptionEndsAt: null,
+  });
+});
 
 describe("POST /api/v1/auth/login", () => {
   it("logs in with valid credentials and returns tokens", async () => {

@@ -82,6 +82,16 @@ beforeEach(() => {
   }
   mockPrisma.auditLog.create.mockResolvedValue({});
   mockPrisma.$transaction.mockResolvedValue([]);
+
+  // requireActiveSchool loads the school on every request. A live, paid-up
+  // school is the baseline; the subscription tests below override it.
+  mockPrisma.school.findUnique.mockResolvedValue({
+    id: SCHOOL_A,
+    name: "School A",
+    isActive: true,
+    subscriptionStatus: "ACTIVE",
+    subscriptionEndsAt: null,
+  });
 });
 
 describe("Lists are fenced to the caller's school", () => {
@@ -284,6 +294,75 @@ describe("A token without a school resolves to nothing", () => {
     const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${noSchool}`);
     expect(res.status).toBe(403);
     expect(mockPrisma.student.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("A lapsed subscription closes the door but keeps the data", () => {
+  function schoolWith(overrides: Record<string, unknown>) {
+    mockPrisma.school.findUnique.mockResolvedValue({
+      id: SCHOOL_A, name: "School A", isActive: true,
+      subscriptionStatus: "ACTIVE", subscriptionEndsAt: null,
+      ...overrides,
+    });
+  }
+
+  it("refuses a suspended school", async () => {
+    schoolWith({ subscriptionStatus: "SUSPENDED" });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(403);
+    // Nothing was read. A suspended school loses access, not its records.
+    expect(mockPrisma.student.findMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cancelled school", async () => {
+    schoolWith({ subscriptionStatus: "CANCELLED" });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 402 once the subscription end date has passed", async () => {
+    schoolWith({ subscriptionEndsAt: new Date(Date.now() - 86400000) });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(402);
+    expect(res.body.message).toMatch(/expired/i);
+  });
+
+  it("still allows a school in its grace period", async () => {
+    schoolWith({ subscriptionStatus: "PAST_DUE" });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(200);
+  });
+
+  it("still allows a school on trial", async () => {
+    schoolWith({ subscriptionStatus: "TRIAL" });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(200);
+  });
+
+  it("allows a subscription that runs into the future", async () => {
+    schoolWith({ subscriptionEndsAt: new Date(Date.now() + 30 * 86400000) });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("The platform console is sealed off from school accounts", () => {
+  it("refuses a school super admin", async () => {
+    const superA = signAccessToken({ sub: "sa", role: Role.SUPER_ADMIN, schoolId: SCHOOL_A });
+    const res = await request(app).get("/api/v1/platform/schools").set("Authorization", `Bearer ${superA}`);
+    expect(res.status).toBe(403);
+    expect(mockPrisma.school.findMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a parent", async () => {
+    const res = await request(app).get("/api/v1/platform/overview").set("Authorization", `Bearer ${parentA}`);
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses a platform owner from the school screens", async () => {
+    const owner = signAccessToken({ sub: "owner", role: Role.PLATFORM_OWNER, schoolId: null });
+    const res = await request(app).get("/api/v1/students").set("Authorization", `Bearer ${owner}`);
+    expect(res.status).toBe(403);
   });
 });
 

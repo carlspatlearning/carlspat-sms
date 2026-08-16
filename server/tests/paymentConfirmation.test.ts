@@ -132,6 +132,8 @@ beforeEach(() => {
         parent: { user: { email: "parent@carlspat.sch.ng" } },
       },
       term: { name: "First Term", session: { name: "2026/2027" } },
+      // The receipt email is signed with the payment's own school name.
+      school: { name: "Carlspat Private School" },
       recordedBy: null,
     };
   });
@@ -176,6 +178,10 @@ beforeEach(() => {
     name: "Carlspat Private School",
     numberPrefix: "CPS",
     paystackSecretKey: null,
+    // requireActiveSchool reads these on every authenticated request.
+    isActive: true,
+    subscriptionStatus: "ACTIVE",
+    subscriptionEndsAt: null,
     motto: "Emphasis on All-Round Development",
     address: "Ido Ekiti",
     phone: "08067281676",
@@ -465,7 +471,8 @@ describe("Part payment amount is bounded on the server", () => {
     });
     mockPrisma.term.findUnique.mockResolvedValue({ id: "term-1", schoolId: "school-1" });
     mockPrisma.school.findUnique.mockResolvedValue({
-      id: "school-1", numberPrefix: "CPS", paystackSecretKey: null,
+      id: "school-1", name: "Carlspat Private School", numberPrefix: "CPS", paystackSecretKey: null,
+      isActive: true, subscriptionStatus: "ACTIVE", subscriptionEndsAt: null,
     });
     mockPrisma.auditLog.create.mockResolvedValue({});
     mockPrisma.user.findUnique.mockResolvedValue({ id: "parent-user-1", email: "parent@carlspat.sch.ng" });
