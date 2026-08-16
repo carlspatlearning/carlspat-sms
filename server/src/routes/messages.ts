@@ -6,7 +6,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate } from "../middleware/auth";
-import { requireActiveSchool } from "../middleware/tenant";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 
 const router = Router();
@@ -44,8 +44,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const staff: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.TEACHER, Role.ACCOUNTANT];
     const isStaff = staff.includes(req.auth!.role);
+    // The contact list is a staff and parent directory. Unscoped, it would show
+    // every name and role on the platform to anyone with a login.
     const users = await prisma.user.findMany({
       where: {
+        schoolId: currentSchoolId(req),
         isActive: true,
         id: { not: req.auth!.sub },
         ...(isStaff ? {} : { role: { in: staff } }),
@@ -72,7 +75,9 @@ router.post(
   ),
   asyncHandler(async (req, res) => {
     const recipient = await prisma.user.findUnique({ where: { id: req.body.recipientId } });
-    if (!recipient || !recipient.isActive) throw ApiError.notFound("Recipient not found");
+    if (!recipient || !recipient.isActive || recipient.schoolId !== currentSchoolId(req)) {
+      throw ApiError.notFound("Recipient not found");
+    }
     if (!canMessage(req.auth!.role, recipient.role)) {
       throw ApiError.forbidden("You can only message school staff");
     }

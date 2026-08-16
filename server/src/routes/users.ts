@@ -7,7 +7,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
-import { requireActiveSchool } from "../middleware/tenant";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { hashPassword } from "../utils/password";
 import { getPagination, paginated } from "../utils/pagination";
@@ -28,9 +28,13 @@ router.use(authenticate, requireActiveSchool);
 router.get(
   "/export/pdf",
   authorize(Role.SUPER_ADMIN),
-  asyncHandler(async (_req, res) => {
-    const school = await prisma.school.findFirst();
+  asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
+    const school = await prisma.school.findUnique({ where: { id: schoolId } });
+    // A printable directory of names, emails and phone numbers — the single
+    // most damaging thing to leak, so it is scoped like everything else.
     const users = await prisma.user.findMany({
+      where: { schoolId },
       select: {
         firstName: true, lastName: true, email: true, phone: true,
         role: true, isActive: true, createdAt: true, lastLoginAt: true,
@@ -147,6 +151,7 @@ router.get(
     const pg = getPagination(req);
     const { q, role } = req.query as Record<string, string | undefined>;
     const where = {
+      schoolId: currentSchoolId(req),
       ...(role ? { role: role as Role } : {}),
       ...(q
         ? {
@@ -197,14 +202,17 @@ router.post(
     if ((role === Role.ADMIN || role === Role.SUPER_ADMIN) && req.auth!.role !== Role.SUPER_ADMIN) {
       throw ApiError.forbidden("Only the super admin can create admin accounts");
     }
-    const school = await prisma.school.findFirst();
+    // A school admin must never be able to mint a platform account for themselves.
+    if (role === Role.PLATFORM_OWNER) {
+      throw ApiError.forbidden("Platform accounts cannot be created from a school");
+    }
     const { password, email, ...rest } = req.body;
     const user = await prisma.user.create({
       data: {
         ...rest,
         email: email.toLowerCase(),
         passwordHash: await hashPassword(password),
-        schoolId: school?.id,
+        schoolId: currentSchoolId(req),
       },
       select: { id: true, email: true, role: true, firstName: true, lastName: true },
     });
@@ -235,7 +243,7 @@ router.patch(
       where: { id: req.params.id },
       include: { teacher: true, parent: true, student: true },
     });
-    if (!target) throw ApiError.notFound("User not found");
+    if (!target || target.schoolId !== currentSchoolId(req)) throw ApiError.notFound("User not found");
     if (
       (target.role === Role.SUPER_ADMIN || target.role === Role.ADMIN) &&
       req.auth!.role !== Role.SUPER_ADMIN &&
@@ -298,7 +306,8 @@ router.delete(
         _count: { select: { scoresRecorded: true, attendanceMarked: true, paymentsRecorded: true } },
       },
     });
-    if (!target) throw ApiError.notFound("User not found");
+    const schoolId = currentSchoolId(req);
+    if (!target || target.schoolId !== schoolId) throw ApiError.notFound("User not found");
     if (target.id === req.auth!.sub) {
       throw ApiError.badRequest("You cannot delete your own account while logged in to it");
     }
@@ -309,7 +318,11 @@ router.delete(
       throw ApiError.forbidden("Only the super admin can remove an admin account");
     }
     if (target.role === Role.SUPER_ADMIN) {
-      const superAdmins = await prisma.user.count({ where: { role: Role.SUPER_ADMIN, isActive: true } });
+      // Counted within this school. Unscoped, another school's super admins
+      // would satisfy the check and let this school delete its last one.
+      const superAdmins = await prisma.user.count({
+        where: { schoolId, role: Role.SUPER_ADMIN, isActive: true },
+      });
       if (superAdmins <= 1) throw ApiError.badRequest("Cannot delete the only super admin account");
     }
     // Profiles have their own removal flows that keep records consistent
@@ -347,14 +360,18 @@ router.get(
   authorize(...ADMINS),
   asyncHandler(async (req, res) => {
     const pg = getPagination(req, 50);
+    // The audit trail names who did what and from which IP, across every action
+    // in the system — it needs the same fence as the records it describes.
+    const where = { schoolId: currentSchoolId(req) };
     const [items, total] = await Promise.all([
       prisma.auditLog.findMany({
+        where,
         include: { user: { select: { firstName: true, lastName: true, role: true, email: true } } },
         orderBy: { createdAt: "desc" },
         skip: pg.skip,
         take: pg.take,
       }),
-      prisma.auditLog.count(),
+      prisma.auditLog.count({ where }),
     ]);
     res.json({ success: true, data: paginated(items, total, pg) });
   })
