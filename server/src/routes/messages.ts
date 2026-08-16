@@ -6,10 +6,11 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // Who can message whom: staff ↔ anyone; parents/students → staff only.
 function canMessage(senderRole: Role, recipientRole: Role): boolean {

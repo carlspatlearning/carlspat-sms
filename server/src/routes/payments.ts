@@ -7,6 +7,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { nextReceiptNo } from "../utils/ids";
 import { getFeeBalance } from "../services/feeService";
@@ -118,7 +119,7 @@ router.post(
 );
 
 // ── Authenticated routes ─────────────────────────────────────────────────────
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // GET /payments?studentId=&termId=&q= — payment history
 router.get(

@@ -29,6 +29,7 @@ function arrange({ paid }: { paid: number }) {
   // Student lookup used both by the access guard and the balance calculator
   mockPrisma.student.findUnique.mockResolvedValue({
     id: "student-1",
+    schoolId: "school-1",
     userId: null,
     classRoomId: "class-1",
     parent: { userId: "parent-user-1" },
@@ -87,6 +88,7 @@ describe("Report card fee lock", () => {
     arrange({ paid: 50000 });
     mockPrisma.student.findUnique.mockResolvedValue({
       id: "student-1",
+      schoolId: "school-1",
       userId: null,
       classRoomId: "class-1",
       parent: { userId: "someone-else" },

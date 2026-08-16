@@ -4,11 +4,12 @@ import { Role } from "@prisma/client";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { uploadImage, UploadResult } from "../services/storage";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 /**
  * Locally-stored files are served by THIS API server, so the URL must be

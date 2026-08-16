@@ -6,11 +6,12 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { getFeeBalance } from "../services/feeService";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 const FEE_MANAGERS: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
 

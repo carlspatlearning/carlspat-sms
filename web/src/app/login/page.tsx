@@ -4,7 +4,7 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { GraduationCap, Loader2 } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
-import { saveSession, SessionUser } from "@/lib/auth";
+import { homePathFor, saveSession, SessionUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,7 +44,7 @@ function LoginForm() {
         { email, password }
       );
       saveSession(res.data.user, res.data.accessToken, res.data.refreshToken);
-      router.push(params.get("next") ?? "/dashboard");
+      router.push(params.get("next") ?? homePathFor(res.data.user));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
       setLoading(false);

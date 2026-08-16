@@ -10,6 +10,7 @@
     "start": "node dist/src/index.js",
     "typecheck": "tsc --noEmit",
     "seed": "tsx prisma/seed.ts",
+    "seed:demo": "tsx prisma/seed.demo.ts",
     "migrate": "prisma migrate deploy",
     "test": "jest --runInBand",
     "prisma:generate": "prisma generate"

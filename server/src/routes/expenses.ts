@@ -6,12 +6,13 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { getPagination, paginated } from "../utils/pagination";
 import { expensesInTerm } from "../utils/expenseScope";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 const FINANCE: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
 

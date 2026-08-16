@@ -12,20 +12,25 @@ const hash = (pw: string) => bcrypt.hashSync(pw, 10);
 
 async function main() {
   // ── School ────────────────────────────────────────────────────────────────
-  let school = await prisma.school.findFirst();
-  if (!school) {
-    school = await prisma.school.create({
-      data: {
-        name: "Carlspat Private School",
-        motto: "Emphasis on All-Round Development",
-        address:
-          "Surulere, Old Keye Water Factory, Opposite Luku Panel Beater, Ora Road, Ido Ekiti, Ekiti State, Nigeria",
-        phone: "08067281676",
-        email: "carlspatprivateschool@outlook.com",
-        headTeacherName: "The Head Teacher",
-      },
-    });
-  }
+  // Keyed on slug so re-running the seed updates the same school rather than
+  // adopting whichever school happens to be first — which, on a platform with
+  // several schools, would seed one school's data into another.
+  const school = await prisma.school.upsert({
+    where: { slug: "carlspat-private-school" },
+    update: {},
+    create: {
+      slug: "carlspat-private-school",
+      name: "Carlspat Private School",
+      numberPrefix: "CPS",
+      motto: "Emphasis on All-Round Development",
+      address:
+        "Surulere, Old Keye Water Factory, Opposite Luku Panel Beater, Ora Road, Ido Ekiti, Ekiti State, Nigeria",
+      phone: "08067281676",
+      email: "carlspatprivateschool@outlook.com",
+      headTeacherName: "The Head Teacher",
+      subscriptionStatus: "ACTIVE",
+    },
+  });
   const schoolId = school.id;
 
   // ── Academic session & terms ─────────────────────────────────────────────
@@ -51,7 +56,7 @@ async function main() {
     terms[t.name] = await prisma.term.upsert({
       where: { sessionId_name: { sessionId: session.id, name: t.name } },
       update: { isCurrent: t.isCurrent },
-      create: { sessionId: session.id, ...t },
+      create: { sessionId: session.id, schoolId, ...t },
     });
   }
   // ── Assessment structure (admin-editable) ────────────────────────────────
@@ -134,17 +139,17 @@ async function main() {
   // Teacher + profile, assigned as form teacher of Primary 5
   const teacherUser = await upsertUser("teacher@carlspat.sch.ng", Role.TEACHER, "Tunde", "Bakare", "Teacher#123");
   const teacher = await prisma.teacher.upsert({
-    where: { staffNo: "CPS/STF/001" },
+    where: { schoolId_staffNo: { schoolId, staffNo: "CPS/STF/001" } },
     update: { userId: teacherUser.id },
-    create: { userId: teacherUser.id, staffNo: "CPS/STF/001", qualification: "B.Ed", specialization: "Mathematics" },
+    create: { schoolId, userId: teacherUser.id, staffNo: "CPS/STF/001", qualification: "B.Ed", specialization: "Mathematics" },
   });
   await prisma.classRoom.update({ where: { id: classes["Primary 5"].id }, data: { formTeacherId: teacher.id } });
 
   const teacher2User = await upsertUser("teacher2@carlspat.sch.ng", Role.TEACHER, "Chioma", "Okafor", "Teacher#123");
   const teacher2 = await prisma.teacher.upsert({
-    where: { staffNo: "CPS/STF/002" },
+    where: { schoolId_staffNo: { schoolId, staffNo: "CPS/STF/002" } },
     update: { userId: teacher2User.id },
-    create: { userId: teacher2User.id, staffNo: "CPS/STF/002", qualification: "NCE", specialization: "English" },
+    create: { schoolId, userId: teacher2User.id, staffNo: "CPS/STF/002", qualification: "NCE", specialization: "English" },
   });
 
   // Subject assignments for Primary 5

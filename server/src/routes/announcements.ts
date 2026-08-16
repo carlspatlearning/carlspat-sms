@@ -6,11 +6,12 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { sendEmail, sendSms } from "../services/notify";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 const audienceForRole: Record<Role, Audience[]> = {
   SUPER_ADMIN: [Audience.ALL, Audience.TEACHERS, Audience.PARENTS, Audience.STUDENTS, Audience.STAFF],

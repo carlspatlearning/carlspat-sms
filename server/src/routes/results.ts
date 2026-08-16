@@ -6,11 +6,12 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { computeStudentResult, rankClass } from "../services/resultService";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 /** Teachers may only enter scores for class-subjects assigned to them. */
 async function assertTeacherTeaches(userId: string, classRoomId: string, subjectId: string) {

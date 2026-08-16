@@ -16,6 +16,6 @@
     "noUnusedLocals": false,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*.ts", "prisma/seed.ts", "tests/**/*.ts"],
+  "include": ["src/**/*.ts", "prisma/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

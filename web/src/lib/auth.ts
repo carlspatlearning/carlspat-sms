@@ -3,7 +3,8 @@
 export interface SessionUser {
   id: string;
   email: string;
-  role: "SUPER_ADMIN" | "ADMIN" | "TEACHER" | "PARENT" | "STUDENT" | "ACCOUNTANT";
+  // PLATFORM_OWNER belongs to no school and uses /platform, never /dashboard.
+  role: "PLATFORM_OWNER" | "SUPER_ADMIN" | "ADMIN" | "TEACHER" | "PARENT" | "STUDENT" | "ACCOUNTANT";
   firstName: string;
   lastName: string;
   phone: string | null;
@@ -42,6 +43,11 @@ export function getRefreshToken(): string | null {
 export function setTokens(accessToken: string, refreshToken: string) {
   localStorage.setItem(ACCESS_KEY, accessToken);
   localStorage.setItem(REFRESH_KEY, refreshToken);
+}
+
+/** Where this user belongs after signing in. */
+export function homePathFor(user: SessionUser): string {
+  return user.role === "PLATFORM_OWNER" ? "/platform" : "/dashboard";
 }
 
 export function getUser(): SessionUser | null {

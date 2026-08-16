@@ -16,6 +16,7 @@ import { Prisma } from "@prisma/client";
 
 interface PaymentRow {
   id: string;
+  schoolId: string;
   receiptNo: string | null;
   studentId: string;
   termId: string;
@@ -43,7 +44,10 @@ const mockPrisma = {
   feeStructure: { findMany: jest.fn() },
   feeWaiver: { aggregate: jest.fn() },
   user: { findUnique: jest.fn() },
-  school: { findFirst: jest.fn() },
+  term: { findUnique: jest.fn() },
+  // Now read per-school: the Paystack key, the receipt prefix and the branding
+  // on the receipt all come from the payment's own school.
+  school: { findFirst: jest.fn(), findUnique: jest.fn() },
   auditLog: { create: jest.fn().mockResolvedValue({}) },
 };
 
@@ -97,6 +101,7 @@ beforeEach(() => {
 
   store = {
     id: "pay-1",
+    schoolId: "school-1",
     receiptNo: null,
     studentId: "student-1",
     termId: "term-1",
@@ -153,9 +158,32 @@ beforeEach(() => {
   mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
   mockPrisma.student.findUnique.mockResolvedValue({
     id: "student-1",
+    schoolId: "school-1",
     userId: null,
     classRoomId: "class-1",
     parent: { userId: "parent-user-1" },
+  });
+  mockPrisma.term.findUnique.mockResolvedValue({
+    id: "term-1",
+    schoolId: "school-1",
+    name: "First Term",
+    session: { name: "2026/2027" },
+  });
+  // paystackSecretKey null on purpose: the school falls back to the server-wide
+  // key, which is the path the founding school takes until it enters its own.
+  mockPrisma.school.findUnique.mockResolvedValue({
+    id: "school-1",
+    name: "Carlspat Private School",
+    numberPrefix: "CPS",
+    paystackSecretKey: null,
+    motto: "Emphasis on All-Round Development",
+    address: "Ido Ekiti",
+    phone: "08067281676",
+    email: "info@carlspat.sch.ng",
+    logoUrl: null,
+    stampUrl: null,
+    headTeacherName: "Head Teacher",
+    currency: "NGN",
   });
   mockPrisma.studentFeeItem.findMany.mockResolvedValue([]);
   mockPrisma.feeStructure.findMany.mockResolvedValue([{ amount: AMOUNT, category: { name: "Tuition Fee" }, dueDate: null }]);
@@ -423,16 +451,23 @@ describe("Part payment amount is bounded on the server", () => {
 
     jest.clearAllMocks();
     mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 30000 } });
+    mockPrisma.payment.create.mockImplementation(async (args: any) => ({ id: "pay-new", ...args.data }));
     mockPrisma.studentFeeItem.findMany.mockResolvedValue([]);
     mockPrisma.feeStructure.findMany.mockResolvedValue([
       { amount: AMOUNT, category: { name: "Tuition Fee" }, dueDate: null },
     ]);
     mockPrisma.student.findUnique.mockResolvedValue({
       id: "student-1",
+      schoolId: "school-1",
       userId: null,
       classRoomId: "class-1",
       parent: { userId: "parent-user-1" },
     });
+    mockPrisma.term.findUnique.mockResolvedValue({ id: "term-1", schoolId: "school-1" });
+    mockPrisma.school.findUnique.mockResolvedValue({
+      id: "school-1", numberPrefix: "CPS", paystackSecretKey: null,
+    });
+    mockPrisma.auditLog.create.mockResolvedValue({});
     mockPrisma.user.findUnique.mockResolvedValue({ id: "parent-user-1", email: "parent@carlspat.sch.ng" });
 
     const exact = await init(20000);

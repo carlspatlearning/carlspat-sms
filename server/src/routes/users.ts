@@ -7,6 +7,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { hashPassword } from "../utils/password";
 import { getPagination, paginated } from "../utils/pagination";
@@ -21,7 +22,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // GET /users/export/pdf — super-admin: download all user accounts as PDF
 router.get(

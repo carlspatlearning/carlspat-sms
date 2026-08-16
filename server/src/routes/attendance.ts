@@ -6,10 +6,11 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 /** Teachers may only mark classes they form-teach or teach a subject in. */
 async function assertTeacherOwnsClass(userId: string, classRoomId: string) {

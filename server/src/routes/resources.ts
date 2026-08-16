@@ -7,6 +7,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { uploadDocument, UploadResult } from "../services/storage";
 
@@ -40,7 +41,7 @@ function makeAbsolute(req: Request, url: string): string {
 }
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // POST /resources — upload a resource document (teachers + admins)
 router.post(

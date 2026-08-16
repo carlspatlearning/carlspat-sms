@@ -3,11 +3,12 @@ import { PaymentStatus, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../middleware/error";
 import { authenticate, authorize, STAFF } from "../middleware/auth";
+import { requireActiveSchool } from "../middleware/tenant";
 import { getFeeBalance } from "../services/feeService";
 import { expensesInTerm } from "../utils/expenseScope";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // GET /dashboard/stats — headline analytics for staff dashboards
 router.get(
