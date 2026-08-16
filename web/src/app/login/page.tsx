@@ -31,8 +31,16 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api.get<ApiResponse<School>>("/settings/school").then((r) => setSchool(r.data)).catch(() => null);
-  }, []);
+    // Nobody is signed in yet, so the page has to say which school it is showing.
+    // In order: ?school= in the link, then the slug this deployment is pinned to,
+    // then nothing — which the API answers only while a single school exists.
+    const slug = params.get("school") ?? process.env.NEXT_PUBLIC_SCHOOL_SLUG ?? "";
+    const query = slug ? `?slug=${encodeURIComponent(slug)}` : "";
+    api
+      .get<ApiResponse<School>>(`/settings/school${query}`)
+      .then((r) => setSchool(r.data))
+      .catch(() => null);
+  }, [params]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

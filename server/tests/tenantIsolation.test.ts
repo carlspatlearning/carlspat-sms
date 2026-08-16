@@ -346,6 +346,63 @@ describe("A lapsed subscription closes the door but keeps the data", () => {
   });
 });
 
+describe("Public school branding resolves to one school, never a guess", () => {
+  const OTHER = { id: SCHOOL_B, slug: "other-school", name: "Other School" };
+  const MINE = { id: SCHOOL_A, slug: "my-school", name: "My School" };
+
+  it("uses the signed-in user's school, ignoring a slug that points elsewhere", async () => {
+    mockPrisma.school.findUnique.mockImplementation(async (args: any) => {
+      if (args.where.id === SCHOOL_A) return { ...MINE, isActive: true, subscriptionStatus: "ACTIVE", subscriptionEndsAt: null };
+      if (args.where.slug === "other-school") return OTHER;
+      return null;
+    });
+    const res = await request(app)
+      .get("/api/v1/settings/school?slug=other-school")
+      .set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(SCHOOL_A);
+  });
+
+  it("uses the slug when nobody is signed in", async () => {
+    mockPrisma.school.findUnique.mockImplementation(async (args: any) =>
+      args.where.slug === "other-school" ? OTHER : null
+    );
+    const res = await request(app).get("/api/v1/settings/school?slug=other-school");
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(SCHOOL_B);
+  });
+
+  it("404s on an unknown slug rather than falling back to some other school", async () => {
+    mockPrisma.school.findUnique.mockResolvedValue(null);
+    const res = await request(app).get("/api/v1/settings/school?slug=nope");
+    expect(res.status).toBe(404);
+    expect(mockPrisma.school.findMany).not.toHaveBeenCalled();
+  });
+
+  it("serves the only school when there is exactly one and no slug", async () => {
+    mockPrisma.school.findMany.mockResolvedValue([MINE]);
+    const res = await request(app).get("/api/v1/settings/school");
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(SCHOOL_A);
+  });
+
+  it("refuses to pick for you once a second school exists", async () => {
+    mockPrisma.school.findMany.mockResolvedValue([MINE, OTHER]);
+    const res = await request(app).get("/api/v1/settings/school");
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/slug/i);
+  });
+
+  it("falls through to the public paths when the token is invalid", async () => {
+    mockPrisma.school.findMany.mockResolvedValue([MINE]);
+    const res = await request(app)
+      .get("/api/v1/settings/school")
+      .set("Authorization", "Bearer garbage.token.value");
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(SCHOOL_A);
+  });
+});
+
 describe("The platform console is sealed off from school accounts", () => {
   it("refuses a school super admin", async () => {
     const superA = signAccessToken({ sub: "sa", role: Role.SUPER_ADMIN, schoolId: SCHOOL_A });

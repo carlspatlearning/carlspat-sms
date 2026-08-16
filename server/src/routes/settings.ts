@@ -6,22 +6,43 @@ import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
 import { currentSchoolId } from "../middleware/tenant";
+import { verifyAccessToken } from "../utils/jwt";
 import { audit } from "../middleware/audit";
 
 const router = Router();
 
-// GET /settings/school?slug=… — public branding for the login page and report cards.
+// GET /settings/school?slug=… — school branding, for the login page and for
+// every signed-in screen that shows the school's name and logo.
 //
-// Public, so there is no token to take the school from. The caller names the
-// school by slug instead. While only one school exists the slug may be omitted,
-// which keeps existing deployments working; once a second school is added the
-// slug becomes required, because "the first school in the table" is then a
-// coin toss rather than an answer.
+// Reachable without a token because the login page needs it before anyone has
+// signed in. The school is resolved in order of how trustworthy the source is:
+//
+//   1. A valid token — the signed-in user's own school. Cannot be spoofed, so
+//      it wins over anything in the query string.
+//   2. ?slug= — how the login page names the school it is showing.
+//   3. The only school, when there is exactly one. Keeps single-school
+//      deployments working untouched.
+//
+// With several schools and no token or slug there is no answer to give, and
+// "whichever school is first" would be a coin toss, so it asks for the slug.
 router.get(
   "/school",
   asyncHandler(async (req, res) => {
-    const slug = typeof req.query.slug === "string" ? req.query.slug : null;
+    const header = req.headers.authorization;
+    if (header?.startsWith("Bearer ")) {
+      try {
+        const payload = verifyAccessToken(header.slice(7));
+        if (payload.schoolId) {
+          const school = await prisma.school.findUnique({ where: { id: payload.schoolId } });
+          if (school) return res.json({ success: true, data: school });
+        }
+      } catch {
+        // An expired or invalid token is not an error here — this endpoint works
+        // signed out, so fall through to the slug and single-school paths.
+      }
+    }
 
+    const slug = typeof req.query.slug === "string" ? req.query.slug : null;
     if (slug) {
       const school = await prisma.school.findUnique({ where: { slug } });
       if (!school) throw ApiError.notFound("School not found");
