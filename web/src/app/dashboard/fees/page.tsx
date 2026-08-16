@@ -647,6 +647,10 @@ function StaffFees() {
 
 // ── Parent/student view: balances + online payment ──────────────────────────
 
+// Mirrors MIN_ONLINE_PAYMENT on the server, which is the check that actually
+// counts; this one only spares the parent a round trip.
+const MIN_ONLINE_PAYMENT = 100;
+
 function FamilyFees() {
   const user = getUser();
   const [term, setTerm] = useState<Term | null>(null);
@@ -655,6 +659,7 @@ function FamilyFees() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "warning" | "destructive"; text: string } | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [payAmounts, setPayAmounts] = useState<Record<string, string>>({});
 
   const loadBalances = useCallback(async () => {
     try {
@@ -699,6 +704,22 @@ function FamilyFees() {
       });
   }, [loadBalances]);
 
+  // Fees are commonly paid in instalments, so the parent chooses the amount.
+  // Blank means "the whole balance", which keeps paying in full a single click.
+  function amountFor(child: ChildBalance) {
+    const typed = payAmounts[child.id];
+    if (typed === undefined || typed.trim() === "") return child.outstanding;
+    return Number(typed);
+  }
+
+  function amountProblem(child: ChildBalance): string | null {
+    const value = amountFor(child);
+    if (!Number.isFinite(value) || value <= 0) return "Enter an amount";
+    if (value < MIN_ONLINE_PAYMENT) return `Minimum ${formatNaira(MIN_ONLINE_PAYMENT)}`;
+    if (value > child.outstanding) return `More than the ${formatNaira(child.outstanding)} owed`;
+    return null;
+  }
+
   async function payOnline(studentId: string, amount: number) {
     if (!term) return;
     setPaying(studentId);
@@ -737,10 +758,33 @@ function FamilyFees() {
                 )}
               </div>
               {!c.fullyPaid && user?.role === "PARENT" && (
-                <Button onClick={() => payOnline(c.id, c.outstanding)} disabled={paying === c.id}>
-                  {paying === c.id && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Pay {formatNaira(c.outstanding)} online
-                </Button>
+                <div className="flex flex-col gap-1 sm:items-end">
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₦</span>
+                      <Input
+                        type="number"
+                        inputMode="numeric"
+                        min={MIN_ONLINE_PAYMENT}
+                        max={c.outstanding}
+                        className="w-32 pl-6"
+                        placeholder={String(c.outstanding)}
+                        value={payAmounts[c.id] ?? ""}
+                        onChange={(e) => setPayAmounts((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                      />
+                    </div>
+                    <Button
+                      onClick={() => payOnline(c.id, amountFor(c))}
+                      disabled={paying === c.id || amountProblem(c) !== null}
+                    >
+                      {paying === c.id && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Pay {formatNaira(amountFor(c) || 0)}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {amountProblem(c) ?? `Part payment allowed · owing ${formatNaira(c.outstanding)}`}
+                  </p>
+                </div>
               )}
             </CardContent>
           </Card>

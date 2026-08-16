@@ -344,3 +344,108 @@ describe("Receipt numbers are not spent before confirmation", () => {
     expect(res.body.message).toMatch(/confirmed/i);
   });
 });
+
+/**
+ * Parents type the amount so fees can be paid in instalments, which means the
+ * figure is attacker-controlled. These bounds are enforced server-side; the
+ * page's matching checks are only a convenience.
+ */
+describe("Part payment amount is bounded on the server", () => {
+  function init(amount: number) {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: true, data: { authorization_url: "https://checkout.paystack.com/xyz" } }),
+    });
+    return request(app)
+      .post("/api/v1/payments/paystack/init")
+      .set("Authorization", `Bearer ${parentToken}`)
+      .send({ studentId: "student-1", termId: "term-1", amount });
+  }
+
+  it("accepts a part payment below the outstanding balance", async () => {
+    const res = await init(20000); // ₦20,000 of the ₦50,000 owed
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.payment.create.mock.calls[0][0].data.amount).toBe(20000);
+    // Paystack is charged in kobo.
+    const sentToPaystack = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(sentToPaystack.amount).toBe(2_000_000);
+  });
+
+  it("accepts exactly the outstanding balance", async () => {
+    const res = await init(AMOUNT);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects more than the outstanding balance", async () => {
+    const res = await init(AMOUNT + 1);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/outstanding balance/i);
+    expect(mockPrisma.payment.create).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled(); // never reaches Paystack
+  });
+
+  it("rejects an amount below the ₦100 Paystack minimum", async () => {
+    const res = await init(99);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/smallest online payment/i);
+    expect(mockPrisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative amount", async () => {
+    const res = await init(-5000);
+
+    expect(res.status).toBe(400);
+    expect(mockPrisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to start a payment when nothing is owed", async () => {
+    // Everything already paid for the term.
+    mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: AMOUNT } });
+
+    const res = await init(1000);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/nothing outstanding/i);
+    expect(mockPrisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("counts an existing part payment when bounding the next one", async () => {
+    // ₦30,000 already paid, so only ₦20,000 may still be charged.
+    mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 30000 } });
+
+    const tooMuch = await init(20001);
+    expect(tooMuch.status).toBe(400);
+    expect(tooMuch.body.message).toMatch(/20,000/);
+
+    jest.clearAllMocks();
+    mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 30000 } });
+    mockPrisma.studentFeeItem.findMany.mockResolvedValue([]);
+    mockPrisma.feeStructure.findMany.mockResolvedValue([
+      { amount: AMOUNT, category: { name: "Tuition Fee" }, dueDate: null },
+    ]);
+    mockPrisma.student.findUnique.mockResolvedValue({
+      id: "student-1",
+      userId: null,
+      classRoomId: "class-1",
+      parent: { userId: "parent-user-1" },
+    });
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "parent-user-1", email: "parent@carlspat.sch.ng" });
+
+    const exact = await init(20000);
+    expect(exact.status).toBe(200);
+  });
+
+  it("stops a parent starting a payment for another family's child", async () => {
+    const res = await request(app)
+      .post("/api/v1/payments/paystack/init")
+      .set("Authorization", `Bearer ${otherParentToken}`)
+      .send({ studentId: "student-1", termId: "term-1", amount: 20000 });
+
+    expect(res.status).toBe(403);
+    expect(mockPrisma.payment.create).not.toHaveBeenCalled();
+  });
+});

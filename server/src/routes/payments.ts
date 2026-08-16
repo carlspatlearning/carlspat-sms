@@ -281,6 +281,10 @@ router.get(
   })
 );
 
+// Paystack rejects anything under ₦100, so there is no point starting a
+// transaction below it.
+export const MIN_ONLINE_PAYMENT = 100;
+
 // POST /payments/paystack/init — parent starts an online card payment
 router.post(
   "/paystack/init",
@@ -289,6 +293,22 @@ router.post(
     if (!env.paystackSecret) throw ApiError.badRequest("Online payment (Paystack) is not configured");
     const { studentId, termId, amount } = req.body;
     await assertCanAccessStudent(req, studentId);
+
+    // Parents choose how much to pay (fees are commonly settled in instalments),
+    // so the amount arrives from the browser and cannot be trusted. Bound it
+    // here: the page's own checks are a convenience, not a control.
+    if (amount < MIN_ONLINE_PAYMENT) {
+      throw ApiError.badRequest(`The smallest online payment is NGN ${MIN_ONLINE_PAYMENT.toLocaleString()}.`);
+    }
+    const balance = await getFeeBalance(studentId, termId);
+    if (balance.outstanding <= 0) {
+      throw ApiError.badRequest("There is nothing outstanding for this term.");
+    }
+    if (amount > balance.outstanding) {
+      throw ApiError.badRequest(
+        `That is more than the outstanding balance of NGN ${balance.outstanding.toLocaleString()}.`
+      );
+    }
 
     const user = await prisma.user.findUnique({ where: { id: req.auth!.sub } });
     const reference = `CPS-PSK-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
