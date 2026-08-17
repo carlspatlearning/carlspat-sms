@@ -1,8 +1,35 @@
 # Multi-Tenancy Plan — Converting Carlspat SMS into a Subscribable Platform
 
-**Status:** Proposal, not started
-**Written:** 16 August 2026
+**Status:** Steps 1 and 2 built on `feature/multi-tenancy`, not deployed
+**Written:** 16 August 2026 · **Updated:** 17 August 2026
 **Audience:** The developer who will implement this, and the product owner
+
+---
+
+## Status at a glance
+
+This began as a proposal. Most of it has since been built; the sections below
+are kept as the reasoning behind the design, not as outstanding work.
+
+| | State |
+|---|---|
+| Schema + migration `0007_multi_tenancy` | **Built.** Verified against a restored copy of live data — 71 pupils, 108 payments, ₦1,893,200 unchanged, no orphaned rows |
+| Tenant middleware (`currentSchoolId`, `requireActiveSchool`) | **Built** |
+| All 16 route files scoped | **Built** |
+| Subscription gate | **Built** — statuses, grace period, expiry |
+| Platform console (API + UI) | **Built** — overview, school list, school detail |
+| Platform owner bootstrap | **Built** — `npm run platform:owner` |
+| Per-school Paystack keys | **Built** — webhook resolves the school before verifying |
+| Tests | **96 passing**, 43 of them tenancy-specific |
+| Recurring subscription billing | **Not built.** Renewal is manual: record payment, click Renew |
+| Per-school login URLs (subdomains) | **Not decided.** Currently `?school=<slug>` or one deployment per school |
+
+**Not deployed.** The branch is complete but unpushed: it gives the founding
+school nothing today, and deploying a change this size to a live school is worth
+doing only when a second school is actually signed up.
+
+See [API.md](API.md) for the tenancy rules, subscription gate and platform
+endpoints as built.
 
 ---
 
