@@ -393,6 +393,49 @@ describe("Public school branding resolves to one school, never a guess", () => {
     expect(res.body.message).toMatch(/slug/i);
   });
 
+  // Found live, on the day of deployment: the endpoint used findUnique with no
+  // select, so it published every School column — including the school's
+  // Paystack secret key, what it pays the platform, and the platform owner's
+  // private notes — to anyone, signed in or not.
+  const SECRETS = ["paystackSecretKey", "platformNotes", "planAmount", "plan", "subscriptionStatus", "subscriptionEndsAt"];
+
+  it("never returns the gateway key, pricing or platform notes to a signed-out caller", async () => {
+    mockPrisma.school.findMany.mockResolvedValue([MINE]);
+    const res = await request(app).get("/api/v1/settings/school");
+    expect(res.status).toBe(200);
+    for (const field of SECRETS) {
+      expect(Object.keys(res.body.data)).not.toContain(field);
+    }
+  });
+
+  it("never asks for them on behalf of a signed-in school admin either", async () => {
+    mockPrisma.school.findUnique.mockResolvedValue({
+      ...MINE, isActive: true, subscriptionStatus: "ACTIVE", subscriptionEndsAt: null,
+    });
+    const res = await request(app).get("/api/v1/settings/school").set("Authorization", `Bearer ${adminA}`);
+    expect(res.status).toBe(200);
+
+    // Asserted on the query rather than the response: the mock returns whatever
+    // it is given regardless of `select`, so only the real database would hide
+    // these. What the route asks for is the thing under test.
+    const branding = mockPrisma.school.findUnique.mock.calls
+      .map((c: any) => c[0])
+      .find((a: any) => a?.select);
+    expect(branding).toBeDefined();
+    for (const field of SECRETS) {
+      expect(branding.select[field]).toBeUndefined();
+    }
+  });
+
+  it("asks Prisma for a fixed field list rather than the whole row", async () => {
+    mockPrisma.school.findMany.mockResolvedValue([MINE]);
+    await request(app).get("/api/v1/settings/school");
+    // The select must be explicit: a bare findMany is what caused the leak.
+    const args = mockPrisma.school.findMany.mock.calls[0][0];
+    expect(args.select).toBeDefined();
+    expect(args.select.paystackSecretKey).toBeUndefined();
+  });
+
   it("falls through to the public paths when the token is invalid", async () => {
     mockPrisma.school.findMany.mockResolvedValue([MINE]);
     const res = await request(app)

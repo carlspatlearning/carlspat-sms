@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
@@ -10,6 +11,33 @@ import { verifyAccessToken } from "../utils/jwt";
 import { audit } from "../middleware/audit";
 
 const router = Router();
+
+/**
+ * The school fields this endpoint may return.
+ *
+ * Explicit, and it must stay explicit. `findUnique` with no select returns every
+ * column, and the School row now holds things no caller should see: the school's
+ * Paystack secret key, what it pays, and the platform owner's private notes
+ * about it. This endpoint is reachable without a token, so a bare findUnique
+ * publishes all three to anyone who asks.
+ *
+ * Anything added to the School model is hidden here by default. That is the
+ * intended direction: a new column must be opted in, not remembered.
+ */
+const publicSchoolFields = {
+  id: true,
+  slug: true,
+  name: true,
+  motto: true,
+  address: true,
+  phone: true,
+  email: true,
+  logoUrl: true,
+  stampUrl: true,
+  headTeacherName: true,
+  numberPrefix: true,
+  currency: true,
+} satisfies Prisma.SchoolSelect;
 
 // GET /settings/school?slug=… — school branding, for the login page and for
 // every signed-in screen that shows the school's name and logo.
@@ -33,7 +61,10 @@ router.get(
       try {
         const payload = verifyAccessToken(header.slice(7));
         if (payload.schoolId) {
-          const school = await prisma.school.findUnique({ where: { id: payload.schoolId } });
+          const school = await prisma.school.findUnique({
+            where: { id: payload.schoolId },
+            select: publicSchoolFields,
+          });
           if (school) return res.json({ success: true, data: school });
         }
       } catch {
@@ -44,12 +75,16 @@ router.get(
 
     const slug = typeof req.query.slug === "string" ? req.query.slug : null;
     if (slug) {
-      const school = await prisma.school.findUnique({ where: { slug } });
+      const school = await prisma.school.findUnique({ where: { slug }, select: publicSchoolFields });
       if (!school) throw ApiError.notFound("School not found");
       return res.json({ success: true, data: school });
     }
 
-    const schools = await prisma.school.findMany({ take: 2, orderBy: { createdAt: "asc" } });
+    const schools = await prisma.school.findMany({
+      take: 2,
+      orderBy: { createdAt: "asc" },
+      select: publicSchoolFields,
+    });
     if (schools.length === 0) throw ApiError.notFound("School not configured");
     if (schools.length > 1) {
       throw ApiError.badRequest("Several schools use this system — specify which with ?slug=");
@@ -80,7 +115,14 @@ router.put(
   ),
   asyncHandler(async (req, res) => {
     const schoolId = currentSchoolId(req);
-    const updated = await prisma.school.update({ where: { id: schoolId }, data: req.body });
+    // Same reason as the GET: a school admin edits branding, and has no business
+    // reading the gateway key, the price their school is charged, or the
+    // platform owner's notes about them.
+    const updated = await prisma.school.update({
+      where: { id: schoolId },
+      data: req.body,
+      select: publicSchoolFields,
+    });
     audit(req, "settings.school_update", "School", schoolId, req.body);
     res.json({ success: true, data: updated });
   })
