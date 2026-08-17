@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Building2, LogOut } from "lucide-react";
+import { Building2, LogOut, UserCog } from "lucide-react";
 import { clearSession, getUser, type SessionUser } from "@/lib/auth";
 
 /**
@@ -46,9 +46,10 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
             School Platform
           </Link>
           <div className="flex items-center gap-4 text-sm">
-            <span className="text-muted-foreground">
+            <Link href="/platform/account" className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
+              <UserCog className="h-4 w-4" />
               {user.firstName} {user.lastName}
-            </span>
+            </Link>
             <button onClick={signOut} className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
               <LogOut className="h-4 w-4" />
               Sign out
