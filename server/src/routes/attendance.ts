@@ -6,10 +6,11 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 /** Teachers may only mark classes they form-teach or teach a subject in. */
 async function assertTeacherOwnsClass(userId: string, classRoomId: string) {
@@ -51,10 +52,26 @@ router.post(
       date: Date;
       records: { studentId: string; status: AttendanceStatus; remark?: string }[];
     };
+    const schoolId = currentSchoolId(req);
     if (req.auth!.role === Role.TEACHER) await assertTeacherOwnsClass(req.auth!.sub, classRoomId);
 
-    const term = await prisma.term.findFirst({ where: { isCurrent: true } });
+    const classRoom = await prisma.classRoom.findUnique({ where: { id: classRoomId }, select: { schoolId: true } });
+    if (!classRoom || classRoom.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+
+    const term = await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
     if (!term) throw ApiError.badRequest("No current term configured");
+
+    // Pupil ids arrive in the request body. Confirm every one is in this class
+    // at this school before writing a register — an unchecked id would create
+    // an attendance row against another school's pupil.
+    const studentIds = records.map((r) => r.studentId);
+    const valid = await prisma.student.findMany({
+      where: { schoolId, classRoomId, id: { in: studentIds } },
+      select: { id: true },
+    });
+    if (valid.length !== new Set(studentIds).size) {
+      throw ApiError.notFound("One or more of those students are not in this class");
+    }
 
     const day = new Date(date);
     day.setUTCHours(0, 0, 0, 0);
@@ -86,15 +103,25 @@ router.get(
   "/class/:classRoomId",
   authorize(Role.TEACHER, Role.ADMIN, Role.SUPER_ADMIN),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const date = new Date(String(req.query.date ?? new Date().toISOString().slice(0, 10)));
     date.setUTCHours(0, 0, 0, 0);
+
+    const classRoom = await prisma.classRoom.findUnique({
+      where: { id: req.params.classRoomId },
+      select: { schoolId: true },
+    });
+    if (!classRoom || classRoom.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+
     const [students, records] = await Promise.all([
       prisma.student.findMany({
-        where: { classRoomId: req.params.classRoomId, status: "ACTIVE" },
+        where: { schoolId, classRoomId: req.params.classRoomId, status: "ACTIVE" },
         select: { id: true, firstName: true, lastName: true, admissionNo: true, passportUrl: true },
         orderBy: { lastName: "asc" },
       }),
-      prisma.attendance.findMany({ where: { classRoomId: req.params.classRoomId, date } }),
+      prisma.attendance.findMany({
+        where: { classRoomId: req.params.classRoomId, date, student: { schoolId } },
+      }),
     ]);
     const byStudent = new Map(records.map((r) => [r.studentId, r]));
     res.json({
@@ -147,8 +174,11 @@ router.get(
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 29 * 86400000);
 
+    // classRoomId is optional here, so without a school filter the default view
+    // would aggregate every school's attendance into one school's report.
     const records = await prisma.attendance.findMany({
       where: {
+        student: { schoolId: currentSchoolId(req) },
         ...(classRoomId ? { classRoomId } : {}),
         date: { gte: fromDate, lte: toDate },
       },

@@ -6,13 +6,14 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS, STAFF } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { nextAdmissionNo } from "../utils/ids";
 import { getPagination, paginated } from "../utils/pagination";
 import { hashPassword } from "../utils/password";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 const studentInclude = {
   classRoom: { select: { id: true, name: true, section: true } },
@@ -28,6 +29,9 @@ router.get(
     const pg = getPagination(req);
     const { q, classRoomId, status } = req.query as Record<string, string | undefined>;
     const where: Prisma.StudentWhereInput = {
+      // First and non-negotiable filter: this school only. Everything below
+      // narrows within it; nothing may widen past it.
+      schoolId: currentSchoolId(req),
       ...(classRoomId ? { classRoomId } : {}),
       ...(status ? { status: status as StudentStatus } : {}),
       ...(q
@@ -80,15 +84,25 @@ router.post(
   authorize(...ADMINS),
   validate(z.object({ body: studentBody })),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    const schoolId = currentSchoolId(req);
     const { createLogin, ...data } = req.body as z.infer<typeof studentBody>;
+
+    // A class or parent named in the body is caller-supplied, so confirm each
+    // belongs to this school before attaching a pupil to it.
+    if (data.classRoomId) {
+      const cls = await prisma.classRoom.findUnique({ where: { id: data.classRoomId } });
+      if (!cls || cls.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+    }
+    if (data.parentId) {
+      const parent = await prisma.parent.findUnique({ where: { id: data.parentId } });
+      if (!parent || parent.schoolId !== schoolId) throw ApiError.notFound("Parent not found");
+    }
 
     let userId: string | undefined;
     if (createLogin) {
       const user = await prisma.user.create({
         data: {
-          schoolId: school.id,
+          schoolId,
           email: createLogin.email.toLowerCase(),
           passwordHash: await hashPassword(createLogin.password),
           role: Role.STUDENT,
@@ -100,7 +114,7 @@ router.post(
     }
 
     const student = await prisma.student.create({
-      data: { ...data, schoolId: school.id, admissionNo: await nextAdmissionNo(), userId },
+      data: { ...data, schoolId, admissionNo: await nextAdmissionNo(schoolId), userId },
       include: studentInclude,
     });
     audit(req, "student.create", "Student", student.id, { admissionNo: student.admissionNo });
@@ -114,24 +128,25 @@ router.get(
   "/promotion-review",
   authorize(...ADMINS),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const { classRoomId, termId } = req.query as Record<string, string | undefined>;
     if (!classRoomId) throw ApiError.badRequest("classRoomId is required");
 
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No term configured");
 
     const [students, assessmentTypes, scoreSummary] = await Promise.all([
       prisma.student.findMany({
-        where: { classRoomId, status: "ACTIVE" },
+        where: { schoolId, classRoomId, status: "ACTIVE" },
         select: { id: true, firstName: true, lastName: true, admissionNo: true, passportUrl: true },
         orderBy: { lastName: "asc" },
       }),
-      prisma.assessmentType.findMany({ where: { isActive: true }, select: { maxScore: true } }),
+      prisma.assessmentType.findMany({ where: { schoolId, isActive: true }, select: { maxScore: true } }),
       prisma.score.groupBy({
         by: ["studentId", "subjectId"],
-        where: { termId: term.id, student: { classRoomId } },
+        where: { termId: term.id, student: { schoolId, classRoomId } },
         _sum: { score: true },
       }),
     ]);
@@ -179,9 +194,13 @@ router.post(
       decisions: { studentId: string; action: "PROMOTE" | "REPEAT" | "GRADUATE"; toClassRoomId?: string }[];
     };
 
-    const session = await prisma.academicSession.findFirst({ where: { isCurrent: true } });
+    const schoolId = currentSchoolId(req);
+    const session = await prisma.academicSession.findFirst({ where: { isCurrent: true, schoolId } });
+    // Both the pupils and the destination classes come from the request body.
+    // Scoping both lookups means an id from another school simply finds nothing
+    // and is skipped, rather than promoting a pupil who is not ours.
     const students = await prisma.student.findMany({
-      where: { id: { in: decisions.map((d) => d.studentId) } },
+      where: { schoolId, id: { in: decisions.map((d) => d.studentId) } },
       include: { classRoom: true },
     });
     const studentMap = new Map(students.map((s) => [s.id, s]));
@@ -189,7 +208,7 @@ router.post(
     const toClassIds = [...new Set(
       decisions.filter((d) => d.action === "PROMOTE" && d.toClassRoomId).map((d) => d.toClassRoomId!)
     )];
-    const destClasses = await prisma.classRoom.findMany({ where: { id: { in: toClassIds } } });
+    const destClasses = await prisma.classRoom.findMany({ where: { schoolId, id: { in: toClassIds } } });
     const classMap = new Map(destClasses.map((c) => [c.id, c]));
 
     const ops = decisions.flatMap((d) => {
@@ -245,7 +264,7 @@ router.get(
       where: { id: req.params.id },
       include: { ...studentInclude, promotions: { orderBy: { promotedAt: "desc" } } },
     });
-    if (!student) throw ApiError.notFound("Student not found");
+    if (!student || student.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Student not found");
     res.json({ success: true, data: student });
   })
 );
@@ -256,6 +275,14 @@ router.put(
   authorize(...ADMINS),
   validate(z.object({ body: studentBody.omit({ createLogin: true }).partial().extend({ status: z.nativeEnum(StudentStatus).optional() }) })),
   asyncHandler(async (req, res) => {
+    // Prisma's update takes a bare id, so the school check has to happen first —
+    // otherwise this edits any pupil on the platform whose id is known.
+    const existing = await prisma.student.findUnique({
+      where: { id: req.params.id },
+      select: { schoolId: true },
+    });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Student not found");
+
     const student = await prisma.student.update({
       where: { id: req.params.id },
       data: req.body,
@@ -273,9 +300,9 @@ router.delete(
   asyncHandler(async (req, res) => {
     const counts = await prisma.student.findUnique({
       where: { id: req.params.id },
-      select: { _count: { select: { scores: true, payments: true, attendance: true } } },
+      select: { schoolId: true, _count: { select: { scores: true, payments: true, attendance: true } } },
     });
-    if (!counts) throw ApiError.notFound("Student not found");
+    if (!counts || counts.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Student not found");
     const hasRecords = counts._count.scores + counts._count.payments + counts._count.attendance > 0;
     if (hasRecords) {
       await prisma.student.update({ where: { id: req.params.id }, data: { status: StudentStatus.WITHDRAWN } });

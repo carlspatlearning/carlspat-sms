@@ -6,13 +6,17 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { sendEmail, sendSms } from "../services/notify";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 const audienceForRole: Record<Role, Audience[]> = {
+  // The platform owner sees no school announcements; requireActiveSchool turns
+  // them away before this map is consulted, but Role demands every key.
+  PLATFORM_OWNER: [],
   SUPER_ADMIN: [Audience.ALL, Audience.TEACHERS, Audience.PARENTS, Audience.STUDENTS, Audience.STAFF],
   ADMIN: [Audience.ALL, Audience.TEACHERS, Audience.PARENTS, Audience.STUDENTS, Audience.STAFF],
   ACCOUNTANT: [Audience.ALL, Audience.STAFF],
@@ -27,6 +31,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const announcements = await prisma.announcement.findMany({
       where: {
+        schoolId: currentSchoolId(req),
         audience: { in: audienceForRole[req.auth!.role] },
         OR: [{ expiresAt: null }, { expiresAt: { gte: new Date() } }],
       },
@@ -55,12 +60,13 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
+    const schoolId = currentSchoolId(req);
+    const school = await prisma.school.findUnique({ where: { id: schoolId }, select: { name: true } });
     if (!school) throw ApiError.notFound("School not configured");
     const { notifyByEmail, notifyBySms, ...data } = req.body;
 
     const announcement = await prisma.announcement.create({
-      data: { ...data, schoolId: school.id, createdById: req.auth!.sub },
+      data: { ...data, schoolId, createdById: req.auth!.sub },
     });
     audit(req, "announcement.create", "Announcement", announcement.id);
 
@@ -72,8 +78,11 @@ router.post(
         : data.audience === Audience.STUDENTS ? [Role.STUDENT]
         : data.audience === Audience.STAFF ? [Role.TEACHER, Role.ACCOUNTANT, Role.ADMIN]
         : [Role.TEACHER, Role.PARENT, Role.STUDENT, Role.ACCOUNTANT];
+      // The school filter matters most here: this list becomes actual emails and
+      // text messages. Unscoped, one school's notice would be sent to every
+      // parent on the platform.
       prisma.user
-        .findMany({ where: { role: { in: roleFilter }, isActive: true }, select: { email: true, phone: true } })
+        .findMany({ where: { schoolId, role: { in: roleFilter }, isActive: true }, select: { email: true, phone: true } })
         .then(async (users) => {
           for (const u of users) {
             if (notifyByEmail) await sendEmail(u.email, `[${school.name}] ${data.title}`, `<p>${data.body}</p>`);
@@ -91,6 +100,12 @@ router.delete(
   "/:id",
   authorize(...ADMINS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.announcement.findUnique({
+      where: { id: req.params.id },
+      select: { schoolId: true },
+    });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Announcement not found");
+
     await prisma.announcement.delete({ where: { id: req.params.id } });
     audit(req, "announcement.delete", "Announcement", req.params.id);
     res.json({ success: true, message: "Announcement deleted" });

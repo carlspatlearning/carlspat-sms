@@ -6,12 +6,13 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS, STAFF } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { hashPassword } from "../utils/password";
 import { getPagination, paginated } from "../utils/pagination";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // GET /parents
 router.get(
@@ -20,15 +21,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const pg = getPagination(req);
     const q = req.query.q as string | undefined;
-    const where = q
-      ? {
-          OR: [
-            { user: { firstName: { contains: q, mode: "insensitive" as const } } },
-            { user: { lastName: { contains: q, mode: "insensitive" as const } } },
-            { user: { email: { contains: q, mode: "insensitive" as const } } },
-          ],
-        }
-      : {};
+    const where = {
+      schoolId: currentSchoolId(req),
+      ...(q
+        ? {
+            OR: [
+              { user: { firstName: { contains: q, mode: "insensitive" as const } } },
+              { user: { lastName: { contains: q, mode: "insensitive" as const } } },
+              { user: { email: { contains: q, mode: "insensitive" as const } } },
+            ],
+          }
+        : {}),
+    };
     const [items, total] = await Promise.all([
       prisma.parent.findMany({
         where,
@@ -65,16 +69,16 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    const schoolId = currentSchoolId(req);
     const { firstName, lastName, email, phone, password, studentIds, ...profile } = req.body;
 
     const parent = await prisma.parent.create({
       data: {
         ...profile,
+        schoolId,
         user: {
           create: {
-            schoolId: school.id,
+            schoolId,
             email: email.toLowerCase(),
             passwordHash: await hashPassword(password),
             role: Role.PARENT,
@@ -87,7 +91,12 @@ router.post(
       include: { user: { select: { id: true, email: true } } },
     });
     if (studentIds?.length) {
-      await prisma.student.updateMany({ where: { id: { in: studentIds } }, data: { parentId: parent.id } });
+      // Scoped, so an id from another school links nothing rather than handing
+      // this parent access to a child who is not theirs.
+      await prisma.student.updateMany({
+        where: { schoolId, id: { in: studentIds } },
+        data: { parentId: parent.id },
+      });
     }
     audit(req, "parent.create", "Parent", parent.id);
     res.status(201).json({ success: true, data: parent });
@@ -131,6 +140,9 @@ router.put(
     })
   ),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.parent.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Parent not found");
+
     const { firstName, lastName, email, phone, isActive, ...profile } = req.body;
     const userFields = {
       ...(firstName !== undefined ? { firstName } : {}),
@@ -163,7 +175,7 @@ router.delete(
       where: { id: req.params.id },
       include: { user: { select: { id: true } }, students: { select: { id: true } } },
     });
-    if (!parent) throw ApiError.notFound("Parent not found");
+    if (!parent || parent.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Parent not found");
     await prisma.$transaction([
       prisma.student.updateMany({ where: { parentId: parent.id }, data: { parentId: null } }),
       prisma.user.delete({ where: { id: parent.user.id } }),
@@ -185,12 +197,20 @@ router.post(
   authorize(...ADMINS),
   validate(z.object({ body: z.object({ studentIds: z.array(z.string()).min(1) }) })),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const parent = await prisma.parent.findUnique({ where: { id: req.params.id } });
-    if (!parent) throw ApiError.notFound("Parent not found");
-    await prisma.student.updateMany({
-      where: { id: { in: (req.body as { studentIds: string[] }).studentIds } },
+    if (!parent || parent.schoolId !== schoolId) throw ApiError.notFound("Parent not found");
+
+    const { studentIds } = req.body as { studentIds: string[] };
+    // Without the school filter this would attach any pupil on the platform to
+    // this parent, handing them that child's results and fee records.
+    const result = await prisma.student.updateMany({
+      where: { schoolId, id: { in: studentIds } },
       data: { parentId: parent.id },
     });
+    if (result.count !== new Set(studentIds).size) {
+      throw ApiError.notFound("One or more of those students were not found");
+    }
     audit(req, "parent.link_students", "Parent", parent.id);
     res.json({ success: true, message: "Students linked to parent" });
   })

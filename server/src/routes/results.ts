@@ -6,11 +6,12 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { computeStudentResult, rankClass } from "../services/resultService";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 /** Teachers may only enter scores for class-subjects assigned to them. */
 async function assertTeacherTeaches(userId: string, classRoomId: string, subjectId: string) {
@@ -48,10 +49,33 @@ router.post(
       assessmentTypeId: string;
       scores: { studentId: string; score: number }[];
     };
+    const schoolId = currentSchoolId(req);
     if (req.auth!.role === Role.TEACHER) await assertTeacherTeaches(req.auth!.sub, classRoomId, subjectId);
 
-    const assessment = await prisma.assessmentType.findUnique({ where: { id: assessmentTypeId } });
-    if (!assessment) throw ApiError.notFound("Assessment type not found");
+    // Every id in this request body is caller-supplied. Each is checked against
+    // the school before a single score is written, because a score landing on
+    // another school's pupil is an academic record silently attached to the
+    // wrong child.
+    const [classRoom, subject, term, assessment] = await Promise.all([
+      prisma.classRoom.findUnique({ where: { id: classRoomId }, select: { schoolId: true } }),
+      prisma.subject.findUnique({ where: { id: subjectId }, select: { schoolId: true } }),
+      prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } }),
+      prisma.assessmentType.findUnique({ where: { id: assessmentTypeId } }),
+    ]);
+    if (!classRoom || classRoom.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+    if (!subject || subject.schoolId !== schoolId) throw ApiError.notFound("Subject not found");
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
+    if (!assessment || assessment.schoolId !== schoolId) throw ApiError.notFound("Assessment type not found");
+
+    const studentIds = scores.map((s) => s.studentId);
+    const validStudents = await prisma.student.findMany({
+      where: { schoolId, classRoomId, id: { in: studentIds } },
+      select: { id: true },
+    });
+    if (validStudents.length !== new Set(studentIds).size) {
+      throw ApiError.notFound("One or more of those students are not in this class");
+    }
+
     for (const s of scores) {
       if (s.score > assessment.maxScore) {
         throw ApiError.badRequest(`Score ${s.score} exceeds the maximum of ${assessment.maxScore} for ${assessment.name}`);
@@ -86,16 +110,20 @@ router.get(
   asyncHandler(async (req, res) => {
     const { classRoomId, subjectId, termId } = req.query as Record<string, string>;
     if (!classRoomId || !subjectId || !termId) throw ApiError.badRequest("classRoomId, subjectId and termId are required");
+    const schoolId = currentSchoolId(req);
     if (req.auth!.role === Role.TEACHER) await assertTeacherTeaches(req.auth!.sub, classRoomId, subjectId);
+
+    const classRoom = await prisma.classRoom.findUnique({ where: { id: classRoomId }, select: { schoolId: true } });
+    if (!classRoom || classRoom.schoolId !== schoolId) throw ApiError.notFound("Class not found");
 
     const [students, scores, assessments] = await Promise.all([
       prisma.student.findMany({
-        where: { classRoomId, status: "ACTIVE" },
+        where: { schoolId, classRoomId, status: "ACTIVE" },
         select: { id: true, firstName: true, lastName: true, admissionNo: true },
         orderBy: { lastName: "asc" },
       }),
-      prisma.score.findMany({ where: { subjectId, termId, student: { classRoomId } } }),
-      prisma.assessmentType.findMany({ where: { isActive: true }, orderBy: { order: "asc" } }),
+      prisma.score.findMany({ where: { subjectId, termId, student: { schoolId, classRoomId } } }),
+      prisma.assessmentType.findMany({ where: { schoolId, isActive: true }, orderBy: { order: "asc" } }),
     ]);
     const byKey = new Map(scores.map((s) => [`${s.studentId}:${s.assessmentTypeId}`, s.score]));
     res.json({
@@ -120,11 +148,12 @@ router.get(
   "/student/:studentId",
   asyncHandler(async (req, res) => {
     await assertCanAccessStudent(req, req.params.studentId);
+    const schoolId = currentSchoolId(req);
     const termId = req.query.termId as string | undefined;
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No term specified and no current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No term specified and no current term configured");
     const result = await computeStudentResult(req.params.studentId, term.id);
     res.json({ success: true, data: result });
   })
@@ -135,15 +164,22 @@ router.get(
   "/class/:classRoomId",
   authorize(Role.TEACHER, ...ADMINS),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const termId = req.query.termId as string | undefined;
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No term specified and no current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No term specified and no current term configured");
+
+    const classRoom = await prisma.classRoom.findUnique({
+      where: { id: req.params.classRoomId },
+      select: { schoolId: true },
+    });
+    if (!classRoom || classRoom.schoolId !== schoolId) throw ApiError.notFound("Class not found");
 
     const ranking = await rankClass(req.params.classRoomId, term.id);
     const students = await prisma.student.findMany({
-      where: { id: { in: ranking.map((r) => r.studentId) } },
+      where: { schoolId, id: { in: ranking.map((r) => r.studentId) } },
       select: { id: true, firstName: true, lastName: true, admissionNo: true },
     });
     const byId = new Map(students.map((s) => [s.id, s]));
@@ -172,19 +208,20 @@ router.get(
         teacher.classSubjects.some((cs) => cs.classRoomId === classRoomId);
       if (!hasAccess) throw ApiError.forbidden("You are not assigned to this class");
     }
+    const schoolId = currentSchoolId(req);
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No term specified and no current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No term specified and no current term configured");
 
     const [students, reports] = await Promise.all([
       prisma.student.findMany({
-        where: { classRoomId, status: "ACTIVE" },
+        where: { schoolId, classRoomId, status: "ACTIVE" },
         select: { id: true, firstName: true, lastName: true, admissionNo: true, passportUrl: true },
         orderBy: { lastName: "asc" },
       }),
       prisma.termReport.findMany({
-        where: { termId: term.id, classRoomId },
+        where: { termId: term.id, classRoomId, student: { schoolId } },
         select: { studentId: true, teacherComment: true, headTeacherComment: true },
       }),
     ]);
@@ -223,8 +260,16 @@ router.put(
     if (headTeacherComment !== undefined && req.auth!.role === Role.TEACHER) {
       throw ApiError.forbidden("Only the school admin can write the head teacher's comment");
     }
-    const student = await prisma.student.findUnique({ where: { id: studentId }, select: { classRoomId: true } });
-    if (!student?.classRoomId) throw ApiError.badRequest("Student is not assigned to a class");
+    const schoolId = currentSchoolId(req);
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+      select: { schoolId: true, classRoomId: true },
+    });
+    if (!student || student.schoolId !== schoolId) throw ApiError.notFound("Student not found");
+    if (!student.classRoomId) throw ApiError.badRequest("Student is not assigned to a class");
+
+    const term = await prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
 
     const report = await prisma.termReport.upsert({
       where: { studentId_termId: { studentId, termId } },

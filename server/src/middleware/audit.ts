@@ -15,6 +15,9 @@ export function audit(
   prisma.auditLog
     .create({
       data: {
+        // Stamped from the token so each school's trail stays its own. Null for
+        // platform-level actions, which belong to no school.
+        schoolId: req.auth?.schoolId ?? null,
         userId: req.auth?.sub ?? null,
         action,
         entity,

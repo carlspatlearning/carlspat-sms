@@ -27,6 +27,8 @@ const mockPrisma = {
   termReport: { findMany: jest.fn().mockResolvedValue([]) },
   announcement: { findMany: jest.fn().mockResolvedValue([]) },
   auditLog: { create: jest.fn().mockResolvedValue({}) },
+  // Loaded by requireActiveSchool before any school route runs.
+  school: { findUnique: jest.fn() },
 };
 
 jest.mock("../src/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -77,7 +79,16 @@ function arrange(opts: {
 const stats = () =>
   request(app).get("/api/v1/dashboard/stats").set("Authorization", `Bearer ${adminToken}`);
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockPrisma.school.findUnique.mockResolvedValue({
+    id: "school-1",
+    name: "Carlspat Private School",
+    isActive: true,
+    subscriptionStatus: "ACTIVE",
+    subscriptionEndsAt: null,
+  });
+});
 
 describe("Outstanding fees", () => {
   it("does not let a family in credit hide a family in debt", async () => {

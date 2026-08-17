@@ -9,17 +9,19 @@ export function middleware(req: NextRequest) {
   const hasSession = req.cookies.has("cps_session");
   const { pathname } = req.nextUrl;
 
-  if (pathname.startsWith("/dashboard") && !hasSession) {
+  if ((pathname.startsWith("/dashboard") || pathname.startsWith("/platform")) && !hasSession) {
     const login = new URL("/login", req.url);
     login.searchParams.set("next", pathname);
     return NextResponse.redirect(login);
   }
   if (pathname === "/login" && hasSession) {
+    // Which home the user lands on depends on their role, which this cookie
+    // does not carry — the login page routes them once it has the real user.
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login"],
+  matcher: ["/dashboard/:path*", "/platform/:path*", "/login"],
 };

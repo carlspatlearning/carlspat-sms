@@ -6,12 +6,14 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, ADMINS, STAFF } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
+import { nextStaffNo } from "../utils/ids";
 import { hashPassword } from "../utils/password";
 import { getPagination, paginated } from "../utils/pagination";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // GET /teachers
 router.get(
@@ -20,15 +22,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const pg = getPagination(req);
     const q = req.query.q as string | undefined;
-    const where = q
-      ? {
-          OR: [
-            { user: { firstName: { contains: q, mode: "insensitive" as const } } },
-            { user: { lastName: { contains: q, mode: "insensitive" as const } } },
-            { staffNo: { contains: q, mode: "insensitive" as const } },
-          ],
-        }
-      : {};
+    const where = {
+      schoolId: currentSchoolId(req),
+      ...(q
+        ? {
+            OR: [
+              { user: { firstName: { contains: q, mode: "insensitive" as const } } },
+              { user: { lastName: { contains: q, mode: "insensitive" as const } } },
+              { staffNo: { contains: q, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
     const [items, total] = await Promise.all([
       prisma.teacher.findMany({
         where,
@@ -62,16 +67,18 @@ router.post(
     const { userId, qualification, specialization } = req.body as {
       userId: string; qualification?: string; specialization?: string;
     };
+    const schoolId = currentSchoolId(req);
     const user = await prisma.user.findUnique({ where: { id: userId }, include: { teacher: true } });
-    if (!user) throw ApiError.notFound("User not found");
+    if (!user || user.schoolId !== schoolId) throw ApiError.notFound("User not found");
     if (user.teacher) throw ApiError.conflict("This user already has a teacher profile");
 
-    const count = await prisma.teacher.count();
+    const staffNo = await nextStaffNo(schoolId);
     const teacher = await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: userId }, data: { role: Role.TEACHER } });
       return tx.teacher.create({
         data: {
-          staffNo: `CPS/STF/${String(count + 1).padStart(3, "0")}`,
+          schoolId,
+          staffNo,
           userId,
           qualification,
           specialization,
@@ -103,18 +110,17 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    const schoolId = currentSchoolId(req);
     const { firstName, lastName, email, phone, password, ...profile } = req.body;
 
-    const count = await prisma.teacher.count();
     const teacher = await prisma.teacher.create({
       data: {
-        staffNo: `CPS/STF/${String(count + 1).padStart(3, "0")}`,
+        schoolId,
+        staffNo: await nextStaffNo(schoolId),
         ...profile,
         user: {
           create: {
-            schoolId: school.id,
+            schoolId,
             email: email.toLowerCase(),
             passwordHash: await hashPassword(password),
             role: Role.TEACHER,
@@ -136,6 +142,7 @@ router.get(
   "/me/classes",
   authorize(Role.TEACHER),
   asyncHandler(async (req, res) => {
+    // Keyed on the caller's own user id, so this is already their own record.
     const teacher = await prisma.teacher.findUnique({
       where: { userId: req.auth!.sub },
       include: {
@@ -164,11 +171,20 @@ router.put(
     }),
   })),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const { classRoomId, subjectIds } = req.body as { classRoomId: string; subjectIds: string[] };
     const teacher = await prisma.teacher.findUnique({ where: { id: req.params.id } });
-    if (!teacher) throw ApiError.notFound("Teacher not found");
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    if (!teacher || teacher.schoolId !== schoolId) throw ApiError.notFound("Teacher not found");
+
+    // The class and every subject come from the request body, so each is checked
+    // before this teacher is attached to them.
+    const cls = await prisma.classRoom.findUnique({ where: { id: classRoomId }, select: { schoolId: true } });
+    if (!cls || cls.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+    const subjects = await prisma.subject.findMany({
+      where: { schoolId, id: { in: subjectIds } },
+      select: { id: true },
+    });
+    if (subjects.length !== new Set(subjectIds).size) throw ApiError.notFound("One or more subjects were not found");
 
     await prisma.$transaction(async (tx) => {
       // Release subjects in this class that are no longer in the new list
@@ -208,6 +224,9 @@ router.put(
     })
   ),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.teacher.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Teacher not found");
+
     const { firstName, lastName, email, phone, isActive, ...profile } = req.body;
     const userFields = {
       ...(firstName !== undefined ? { firstName } : {}),
@@ -241,7 +260,7 @@ router.delete(
         user: { select: { id: true, _count: { select: { scoresRecorded: true, attendanceMarked: true } } } },
       },
     });
-    if (!teacher) throw ApiError.notFound("Teacher not found");
+    if (!teacher || teacher.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Teacher not found");
 
     const hasRecords =
       teacher.user._count.scoresRecorded + teacher.user._count.attendanceMarked > 0;

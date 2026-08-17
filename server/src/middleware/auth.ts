@@ -44,14 +44,20 @@ export const ADMINS: Role[] = [Role.SUPER_ADMIN, Role.ADMIN];
  */
 export async function assertCanAccessStudent(req: Request, studentId: string): Promise<void> {
   const auth = req.auth!;
-  if ((STAFF as string[]).includes(auth.role)) return;
 
   const student = await prisma.student.findUnique({
     where: { id: studentId },
-    select: { userId: true, parent: { select: { userId: true } } },
+    select: { schoolId: true, userId: true, parent: { select: { userId: true } } },
   });
   if (!student) throw ApiError.notFound("Student not found");
 
+  // School first, for everyone including staff. Without this a member of staff
+  // at one school could read any pupil at any other school simply by knowing
+  // the id. "Not found" rather than "forbidden": confirming that an id exists
+  // elsewhere is itself a disclosure.
+  if (student.schoolId !== auth.schoolId) throw ApiError.notFound("Student not found");
+
+  if ((STAFF as string[]).includes(auth.role)) return;
   if (auth.role === Role.STUDENT && student.userId === auth.sub) return;
   if (auth.role === Role.PARENT && student.parent?.userId === auth.sub) return;
   throw ApiError.forbidden();

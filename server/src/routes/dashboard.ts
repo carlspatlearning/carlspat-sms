@@ -3,31 +3,36 @@ import { PaymentStatus, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../middleware/error";
 import { authenticate, authorize, STAFF } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { getFeeBalance } from "../services/feeService";
 import { expensesInTerm } from "../utils/expenseScope";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 // GET /dashboard/stats — headline analytics for staff dashboards
 router.get(
   "/stats",
   authorize(...STAFF),
   asyncHandler(async (req, res) => {
-    const term = await prisma.term.findFirst({ where: { isCurrent: true }, include: { session: true } });
+    const schoolId = currentSchoolId(req);
+    const term = await prisma.term.findFirst({
+      where: { isCurrent: true, schoolId },
+      include: { session: true },
+    });
 
     const [totalStudents, totalTeachers, totalParents, totalClasses] = await Promise.all([
-      prisma.student.count({ where: { status: "ACTIVE" } }),
-      prisma.teacher.count(),
-      prisma.parent.count(),
-      prisma.classRoom.count(),
+      prisma.student.count({ where: { schoolId, status: "ACTIVE" } }),
+      prisma.teacher.count({ where: { schoolId } }),
+      prisma.parent.count({ where: { schoolId } }),
+      prisma.classRoom.count({ where: { schoolId } }),
     ]);
 
     // Attendance rate over the last 30 days
     const since = new Date(Date.now() - 30 * 86400000);
     const attendance = await prisma.attendance.groupBy({
       by: ["status"],
-      where: { date: { gte: since } },
+      where: { date: { gte: since }, student: { schoolId } },
       _count: { _all: true },
     });
     const att = (s: string) => attendance.find((a) => a.status === s)?._count._all ?? 0;
@@ -40,7 +45,7 @@ router.get(
     let finance: { income: number; expenditure: number; balance: number } | null = null;
     if (term && canSeeFinance) {
       const students = await prisma.student.findMany({
-        where: { status: "ACTIVE" },
+        where: { schoolId, status: "ACTIVE" },
         select: { id: true, classRoomId: true },
       });
       const studentIds = students.map((s) => s.id);
@@ -49,7 +54,7 @@ router.get(
         await Promise.all([
           prisma.feeStructure.groupBy({
             by: ["classRoomId"],
-            where: { termId: term.id },
+            where: { schoolId, termId: term.id },
             _sum: { amount: true },
           }),
           // Per-student billing overrides the class structure, exactly as
@@ -72,11 +77,11 @@ router.get(
           // Cash actually received this term, including from students who have
           // since graduated. This is income, not fee collection.
           prisma.payment.aggregate({
-            where: { termId: term.id, status: PaymentStatus.SUCCESS },
+            where: { schoolId, termId: term.id, status: PaymentStatus.SUCCESS },
             _sum: { amount: true },
           }),
           prisma.expense.aggregate({
-            where: expensesInTerm(term),
+            where: { schoolId, ...expensesInTerm(term) },
             _sum: { amount: true },
           }),
         ]);
@@ -122,20 +127,24 @@ router.get(
     let classPerformance: { classRoomId: string; className: string; average: number; students: number }[] = [];
     if (term) {
       const classes = await prisma.classRoom.findMany({
+        where: { schoolId },
         select: { id: true, name: true, _count: { select: { students: { where: { status: "ACTIVE" } } } } },
         orderBy: { level: "asc" },
       });
-      const maxTotalAgg = await prisma.assessmentType.aggregate({ where: { isActive: true }, _sum: { maxScore: true } });
+      const maxTotalAgg = await prisma.assessmentType.aggregate({
+        where: { schoolId, isActive: true },
+        _sum: { maxScore: true },
+      });
       const maxTotal = maxTotalAgg._sum.maxScore ?? 100;
       for (const c of classes) {
         const agg = await prisma.score.aggregate({
-          where: { termId: term.id, student: { classRoomId: c.id } },
+          where: { termId: term.id, student: { schoolId, classRoomId: c.id } },
           _avg: { score: true },
           _count: { _all: true },
         });
         // _avg is per-assessment; scale to percentage of subject total
         const perAssessmentAvg = agg._avg.score ?? 0;
-        const assessmentCount = await prisma.assessmentType.count({ where: { isActive: true } });
+        const assessmentCount = await prisma.assessmentType.count({ where: { schoolId, isActive: true } });
         const average = agg._count._all
           ? Math.round(((perAssessmentAvg * assessmentCount) / maxTotal) * 1000) / 10
           : 0;
@@ -160,7 +169,12 @@ router.get(
 router.get(
   "/me",
   asyncHandler(async (req, res) => {
-    const term = await prisma.term.findFirst({ where: { isCurrent: true }, include: { session: true } });
+    // Parents and students reach their own records through their own user id,
+    // so the school filter here is about the term, which is school-specific.
+    const term = await prisma.term.findFirst({
+      where: { isCurrent: true, schoolId: currentSchoolId(req) },
+      include: { session: true },
+    });
     const role = req.auth!.role;
 
     if (role === Role.PARENT) {

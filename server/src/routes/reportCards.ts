@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { authenticate, assertCanAccessStudent, STAFF } from "../middleware/auth";
+import { currentSchoolId } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { computeStudentResult, attendanceSummary } from "../services/resultService";
 import { assertReportCardUnlocked, getFeeBalance, REPORT_CARD_LOCK_MESSAGE } from "../services/feeService";
@@ -24,16 +25,22 @@ async function enforceFeeLock(role: Role, studentId: string, termId: string) {
 }
 
 async function buildReportData(studentId: string, termId: string): Promise<ReportCardData> {
-  const [student, term, school] = await Promise.all([
+  const [student, term] = await Promise.all([
     prisma.student.findUnique({
       where: { id: studentId },
       include: { classRoom: true },
     }),
     prisma.term.findUnique({ where: { id: termId }, include: { session: true } }),
-    prisma.school.findFirst(),
   ]);
   if (!student) throw ApiError.notFound("Student not found");
   if (!term) throw ApiError.notFound("Term not found");
+
+  // The report card carries the school's crest, motto and head teacher's name.
+  // It must be the pupil's own school, and the term must belong to it too —
+  // otherwise a term id from elsewhere would print another school's session on
+  // this child's certificate.
+  if (term.schoolId !== student.schoolId) throw ApiError.notFound("Term not found");
+  const school = await prisma.school.findUnique({ where: { id: student.schoolId } });
   if (!school) throw ApiError.notFound("School not configured");
 
   const [result, attendance, report] = await Promise.all([
@@ -142,8 +149,15 @@ router.get(
     const termId = String(req.query.termId ?? "");
     if (!termId) throw ApiError.badRequest("termId is required");
 
+    const schoolId = currentSchoolId(req);
+    const cls = await prisma.classRoom.findUnique({
+      where: { id: req.params.classRoomId },
+      select: { schoolId: true, name: true },
+    });
+    if (!cls || cls.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+
     const students = await prisma.student.findMany({
-      where: { classRoomId: req.params.classRoomId, status: "ACTIVE" },
+      where: { schoolId, classRoomId: req.params.classRoomId, status: "ACTIVE" },
       orderBy: { lastName: "asc" },
     });
     if (students.length === 0) throw ApiError.notFound("No active students in this class");
@@ -164,7 +178,6 @@ router.get(
     }
 
     const merged = await merger.saveAsBuffer();
-    const cls = await prisma.classRoom.findUnique({ where: { id: req.params.classRoomId }, select: { name: true } });
     const term = await prisma.term.findUnique({ where: { id: termId }, select: { name: true } });
     audit(req, "report_card.class_download", "ClassRoom", req.params.classRoomId, { termId });
     res
@@ -184,14 +197,20 @@ router.get(
       return res.json({ success: true, data: { valid: false } });
     }
     const [student, term] = await Promise.all([
-      prisma.student.findUnique({ where: { id: sid }, include: { classRoom: true } }),
+      prisma.student.findUnique({ where: { id: sid }, include: { classRoom: true, school: { select: { name: true } } } }),
       prisma.term.findUnique({ where: { id: tid }, include: { session: true } }),
     ]);
     if (!student || !term) return res.json({ success: true, data: { valid: false } });
+    // A pupil and a term from different schools is never a real report card.
+    if (term.schoolId !== student.schoolId) return res.json({ success: true, data: { valid: false } });
+
     res.json({
       success: true,
       data: {
         valid: true,
+        // Naming the school matters once several use the system: whoever is
+        // checking the certificate needs to see which school issued it.
+        school: student.school.name,
         student: `${student.firstName} ${student.lastName}`,
         admissionNo: student.admissionNo,
         className: student.classRoom?.name ?? "—",

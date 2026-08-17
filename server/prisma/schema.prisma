@@ -13,12 +13,25 @@ datasource db {
 // ──────────────────────────── Enums ────────────────────────────
 
 enum Role {
+  // Runs the platform itself and manages subscribing schools. Belongs to no
+  // school, and is the only role permitted to hold a null schoolId.
+  PLATFORM_OWNER
   SUPER_ADMIN
   ADMIN
   TEACHER
   PARENT
   STUDENT
   ACCOUNTANT
+}
+
+// Whether a school may currently use the system. Access is gated on this, so a
+// school that stops paying keeps its data but loses access until it renews.
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
 }
 
 enum Gender {
@@ -82,33 +95,68 @@ enum PromotionType {
 
 model School {
   id              String   @id @default(cuid())
-  name            String   @default("Carlspat Private School")
-  motto           String   @default("Emphasis on All-Round Development")
-  address         String   @default("Surulere, Old Keye Water Factory, Opposite Luku Panel Beater, Ora Road, Ido Ekiti, Ekiti State, Nigeria")
-  phone           String   @default("08067281676")
-  email           String   @default("carlspatprivateschool@outlook.com")
+  // Short handle used in URLs and in staff-facing lists, e.g. "carlspat".
+  slug            String   @unique
+  name            String
+  // Prefix for admission and receipt numbers, e.g. "CPS" -> CPS/2026/0001 and
+  // CPS-RCP-2026-00001. Each school needs its own or the numbers read as
+  // another school's.
+  numberPrefix    String   @default("SCH")
+  motto           String   @default("")
+  address         String   @default("")
+  phone           String   @default("")
+  email           String   @default("")
   logoUrl         String?
   stampUrl        String?
   headTeacherName String?
   currency        String   @default("NGN")
   isActive        Boolean  @default(true)
+
+  // ── Subscription ──
+  // A school keeps its data when a subscription lapses; only access stops.
+  subscriptionStatus SubscriptionStatus @default(TRIAL)
+  plan               String             @default("standard")
+  // Price the school pays per billing cycle, in the platform currency.
+  planAmount         Decimal            @default(0) @db.Decimal(12, 2)
+  // Access is allowed up to this moment. Null means no limit set yet.
+  subscriptionEndsAt DateTime?
+  // Free-text note for the platform owner, e.g. why a school was suspended.
+  platformNotes      String?
+
+  // ── Payment gateway ──
+  // Each school takes fees into its own Paystack account, so parents' money
+  // reaches the school directly and never passes through the platform. Null
+  // means that school has not set online payment up yet.
+  //
+  // This is a live secret key. It is never returned by any API response — see
+  // the platform and settings routes, which strip it — and it must not be added
+  // to any select that feeds a response body.
+  paystackSecretKey  String?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   users              User[]
   students           Student[]
+  teachers           Teacher[]
+  parents            Parent[]
   classes            ClassRoom[]
   subjects           Subject[]
   sessions           AcademicSession[]
+  terms              Term[]
   assessmentTypes    AssessmentType[]
   gradeScales        GradeScale[]
   feeCategories      FeeCategory[]
   feeStructures      FeeStructure[]
   studentFeeItems    StudentFeeItem[]
+  payments           Payment[]
   announcements      Announcement[]
   expenseCategories  ExpenseCategory[]
   expenses           Expense[]
   resources          Resource[]
+  auditLogs          AuditLog[]
+
+  @@index([subscriptionStatus])
 }
 
 model AcademicSession {
@@ -128,12 +176,16 @@ model AcademicSession {
 
 model Term {
   id        String   @id @default(cuid())
+  // Denormalised from session.schoolId. Terms are filtered on nearly every
+  // screen, and carrying the school directly avoids a join on each one.
+  schoolId  String
   sessionId String
   name      String // "First Term" | "Second Term" | "Third Term"
   startDate DateTime
   endDate   DateTime
   isCurrent Boolean  @default(false)
 
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   session         AcademicSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   attendance      Attendance[]
   scores          Score[]
@@ -145,6 +197,7 @@ model Term {
   expenses        Expense[]
 
   @@unique([sessionId, name])
+  @@index([schoolId, isCurrent])
 }
 
 // Editable assessment structure: First Test, Second Test, Assignment, Project,
@@ -215,32 +268,42 @@ model User {
 
 model Teacher {
   id             String    @id @default(cuid())
+  schoolId       String
   userId         String    @unique
-  staffNo        String    @unique
+  staffNo        String
   qualification  String?
   specialization String?
   dateJoined     DateTime?
 
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   formClasses   ClassRoom[]    @relation("FormTeacher")
   classSubjects ClassSubject[]
+
+  // Staff numbers restart at 1 for each school, so they collide across schools.
+  @@unique([schoolId, staffNo])
+  @@index([schoolId])
 }
 
 model Parent {
   id         String  @id @default(cuid())
+  schoolId   String
   userId     String  @unique
   occupation String?
   address    String?
 
+  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   students Student[]
+
+  @@index([schoolId])
 }
 
 model Student {
   id             String        @id @default(cuid())
   schoolId       String
   userId         String?       @unique
-  admissionNo    String        @unique
+  admissionNo    String
   firstName      String
   lastName       String
   middleName     String?
@@ -274,6 +337,9 @@ model Student {
   feeItems        StudentFeeItem[]
   promotions      Promotion[]
 
+  // Admission numbers restart at 1 for each school (CPS/2026/0001), so they are
+  // only unique within a school, never across the platform.
+  @@unique([schoolId, admissionNo])
   @@index([classRoomId])
   @@index([parentId])
   @@index([status])
@@ -468,9 +534,10 @@ model StudentFeeItem {
 
 model Payment {
   id           String        @id @default(cuid())
+  schoolId     String
   // Null until the payment is confirmed — an abandoned online checkout must not
   // consume a number and leave a gap in the bursar's receipt book.
-  receiptNo    String?       @unique
+  receiptNo    String?
   studentId    String
   termId       String
   amount       Decimal       @db.Decimal(12, 2)
@@ -482,10 +549,13 @@ model Payment {
   paidAt       DateTime      @default(now())
   recordedById String?
 
+  school     School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   term       Term    @relation(fields: [termId], references: [id], onDelete: Cascade)
   recordedBy User?   @relation("RecordedPayments", fields: [recordedById], references: [id])
 
+  // Receipt numbers restart at 1 for each school (CPS-RCP-2026-00001).
+  @@unique([schoolId, receiptNo])
   @@index([studentId, termId])
   @@index([status])
 }
@@ -561,6 +631,9 @@ model Message {
 
 model AuditLog {
   id        String   @id @default(cuid())
+  // Null for platform-level actions taken outside any school, e.g. the platform
+  // owner creating or suspending a school.
+  schoolId  String?
   userId    String?
   action    String // e.g. "student.create"
   entity    String?
@@ -570,10 +643,12 @@ model AuditLog {
   meta      Json?
   createdAt DateTime @default(now())
 
-  user User? @relation(fields: [userId], references: [id])
+  school School? @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [userId], references: [id])
 
   @@index([createdAt])
   @@index([userId])
+  @@index([schoolId, createdAt])
 }
 
 // ──────────────────────────── Resources ────────────────────────────

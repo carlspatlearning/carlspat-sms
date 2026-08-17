@@ -6,11 +6,12 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
 import { validate } from "../middleware/validate";
 import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../middleware/auth";
+import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { getFeeBalance } from "../services/feeService";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActiveSchool);
 
 const FEE_MANAGERS: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
 
@@ -18,8 +19,11 @@ const FEE_MANAGERS: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
 
 router.get(
   "/categories",
-  asyncHandler(async (_req, res) => {
-    const categories = await prisma.feeCategory.findMany({ orderBy: { name: "asc" } });
+  asyncHandler(async (req, res) => {
+    const categories = await prisma.feeCategory.findMany({
+      where: { schoolId: currentSchoolId(req) },
+      orderBy: { name: "asc" },
+    });
     res.json({ success: true, data: categories });
   })
 );
@@ -29,9 +33,9 @@ router.post(
   authorize(...FEE_MANAGERS),
   validate(z.object({ body: z.object({ name: z.string().min(2), description: z.string().optional() }) })),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
-    const category = await prisma.feeCategory.create({ data: { ...req.body, schoolId: school.id } });
+    const category = await prisma.feeCategory.create({
+      data: { ...req.body, schoolId: currentSchoolId(req) },
+    });
     audit(req, "fees.category_create", "FeeCategory", category.id);
     res.status(201).json({ success: true, data: category });
   })
@@ -42,6 +46,9 @@ router.put(
   authorize(...FEE_MANAGERS),
   validate(z.object({ body: z.object({ name: z.string().min(2), description: z.string().optional() }) })),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.feeCategory.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Category not found");
+
     const category = await prisma.feeCategory.update({
       where: { id: req.params.id },
       data: req.body,
@@ -55,6 +62,9 @@ router.delete(
   "/categories/:id",
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.feeCategory.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Category not found");
+
     await prisma.feeCategory.delete({ where: { id: req.params.id } });
     audit(req, "fees.category_delete", "FeeCategory", req.params.id);
     res.json({ success: true, message: "Category deleted" });
@@ -69,7 +79,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const { termId, classRoomId } = req.query as Record<string, string | undefined>;
     const structures = await prisma.feeStructure.findMany({
-      where: { ...(termId ? { termId } : {}), ...(classRoomId ? { classRoomId } : {}) },
+      where: {
+        schoolId: currentSchoolId(req),
+        ...(termId ? { termId } : {}),
+        ...(classRoomId ? { classRoomId } : {}),
+      },
       include: {
         category: true,
         classRoom: { select: { id: true, name: true, level: true } },
@@ -96,13 +110,24 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    const schoolId = currentSchoolId(req);
     const { termId, classRoomId, categoryId, amount, dueDate } = req.body;
+
+    // Term, class and category all arrive in the body and all key the upsert.
+    // Unchecked, this would write a fee row into another school's books.
+    const [term, cls, category] = await Promise.all([
+      prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } }),
+      prisma.classRoom.findUnique({ where: { id: classRoomId }, select: { schoolId: true } }),
+      prisma.feeCategory.findUnique({ where: { id: categoryId }, select: { schoolId: true } }),
+    ]);
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
+    if (!cls || cls.schoolId !== schoolId) throw ApiError.notFound("Class not found");
+    if (!category || category.schoolId !== schoolId) throw ApiError.notFound("Category not found");
+
     const structure = await prisma.feeStructure.upsert({
       where: { termId_classRoomId_categoryId: { termId, classRoomId, categoryId } },
       update: { amount, dueDate },
-      create: { schoolId: school.id, termId, classRoomId, categoryId, amount, dueDate },
+      create: { schoolId, termId, classRoomId, categoryId, amount, dueDate },
       include: { category: true, classRoom: { select: { name: true } } },
     });
     audit(req, "fees.structure_upsert", "FeeStructure", structure.id);
@@ -114,6 +139,9 @@ router.delete(
   "/structures/:id",
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.feeStructure.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Fee structure not found");
+
     await prisma.feeStructure.delete({ where: { id: req.params.id } });
     audit(req, "fees.structure_delete", "FeeStructure", req.params.id);
     res.json({ success: true, message: "Fee structure removed" });
@@ -129,7 +157,7 @@ router.get(
     const { studentId, termId } = req.query as Record<string, string | undefined>;
     if (!studentId || !termId) throw ApiError.badRequest("studentId and termId are required");
     const items = await prisma.studentFeeItem.findMany({
-      where: { studentId, termId },
+      where: { schoolId: currentSchoolId(req), studentId, termId },
       include: { category: true },
       orderBy: { category: { name: "asc" } },
     });
@@ -142,12 +170,11 @@ router.post(
   authorize(...FEE_MANAGERS),
   validate(z.object({ body: z.object({ classRoomId: z.string(), termId: z.string() }) })),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const { classRoomId, termId } = req.body;
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
     const [structures, students] = await Promise.all([
-      prisma.feeStructure.findMany({ where: { classRoomId, termId } }),
-      prisma.student.findMany({ where: { classRoomId, status: "ACTIVE" }, select: { id: true } }),
+      prisma.feeStructure.findMany({ where: { schoolId, classRoomId, termId } }),
+      prisma.student.findMany({ where: { schoolId, classRoomId, status: "ACTIVE" }, select: { id: true } }),
     ]);
     if (structures.length === 0) throw ApiError.badRequest("No fee structures configured for this class and term");
     const ops = students.flatMap((s) =>
@@ -155,7 +182,7 @@ router.post(
         prisma.studentFeeItem.upsert({
           where: { studentId_termId_categoryId: { studentId: s.id, termId, categoryId: fs.categoryId } },
           update: { amount: fs.amount },
-          create: { schoolId: school.id, studentId: s.id, termId, categoryId: fs.categoryId, amount: fs.amount },
+          create: { schoolId, studentId: s.id, termId, categoryId: fs.categoryId, amount: fs.amount },
         })
       )
     );
@@ -176,13 +203,20 @@ router.post(
     }),
   })),
   asyncHandler(async (req, res) => {
-    const school = await prisma.school.findFirst();
-    if (!school) throw ApiError.notFound("School not configured");
+    const schoolId = currentSchoolId(req);
     const { studentId, termId, categoryId, amount } = req.body;
+
+    const [student, category] = await Promise.all([
+      prisma.student.findUnique({ where: { id: studentId }, select: { schoolId: true } }),
+      prisma.feeCategory.findUnique({ where: { id: categoryId }, select: { schoolId: true } }),
+    ]);
+    if (!student || student.schoolId !== schoolId) throw ApiError.notFound("Student not found");
+    if (!category || category.schoolId !== schoolId) throw ApiError.notFound("Category not found");
+
     const item = await prisma.studentFeeItem.upsert({
       where: { studentId_termId_categoryId: { studentId, termId, categoryId } },
       update: { amount },
-      create: { schoolId: school.id, studentId, termId, categoryId, amount },
+      create: { schoolId, studentId, termId, categoryId, amount },
       include: { category: true },
     });
     audit(req, "fees.student_item_set", "StudentFeeItem", item.id);
@@ -194,6 +228,9 @@ router.delete(
   "/student-items/:id",
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.studentFeeItem.findUnique({ where: { id: req.params.id }, select: { schoolId: true } });
+    if (!existing || existing.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Fee item not found");
+
     await prisma.studentFeeItem.delete({ where: { id: req.params.id } });
     audit(req, "fees.student_item_delete", "StudentFeeItem", req.params.id);
     res.json({ success: true, message: "Fee item removed" });
@@ -207,8 +244,11 @@ router.get(
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
     const { studentId, termId } = req.query as Record<string, string | undefined>;
+    // FeeWaiver has no schoolId of its own, so it is fenced through the pupil
+    // it belongs to.
     const waivers = await prisma.feeWaiver.findMany({
       where: {
+        student: { schoolId: currentSchoolId(req) },
         ...(studentId ? { studentId } : {}),
         ...(termId ? { termId } : {}),
       },
@@ -236,6 +276,15 @@ router.post(
     })
   ),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
+    const { studentId, termId } = req.body as { studentId: string; termId: string };
+    const [student, term] = await Promise.all([
+      prisma.student.findUnique({ where: { id: studentId }, select: { schoolId: true } }),
+      prisma.term.findUnique({ where: { id: termId }, select: { schoolId: true } }),
+    ]);
+    if (!student || student.schoolId !== schoolId) throw ApiError.notFound("Student not found");
+    if (!term || term.schoolId !== schoolId) throw ApiError.notFound("Term not found");
+
     const waiver = await prisma.feeWaiver.create({ data: req.body });
     audit(req, "fees.waiver_create", "FeeWaiver", waiver.id, { amount: req.body.amount });
     res.status(201).json({ success: true, data: waiver });
@@ -246,6 +295,12 @@ router.delete(
   "/waivers/:id",
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
+    const existing = await prisma.feeWaiver.findUnique({
+      where: { id: req.params.id },
+      select: { student: { select: { schoolId: true } } },
+    });
+    if (!existing || existing.student.schoolId !== currentSchoolId(req)) throw ApiError.notFound("Discount not found");
+
     await prisma.feeWaiver.delete({ where: { id: req.params.id } });
     audit(req, "fees.waiver_delete", "FeeWaiver", req.params.id);
     res.json({ success: true, message: "Discount removed" });
@@ -259,11 +314,12 @@ router.get(
   "/balance/:studentId",
   asyncHandler(async (req, res) => {
     await assertCanAccessStudent(req, req.params.studentId);
+    const schoolId = currentSchoolId(req);
     const termId = req.query.termId as string | undefined;
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No term specified and no current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No term specified and no current term configured");
     const balance = await getFeeBalance(req.params.studentId, term.id);
     res.json({ success: true, data: balance });
   })
@@ -274,15 +330,18 @@ router.get(
   "/debtors",
   authorize(...FEE_MANAGERS),
   asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
     const termId = req.query.termId as string | undefined;
     const classRoomId = req.query.classRoomId as string | undefined;
     const term = termId
       ? await prisma.term.findUnique({ where: { id: termId } })
-      : await prisma.term.findFirst({ where: { isCurrent: true } });
-    if (!term) throw ApiError.badRequest("No current term configured");
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No current term configured");
 
+    // The debtors report names families and what they owe, with parent phone
+    // numbers attached — it must never reach beyond this school.
     const students = await prisma.student.findMany({
-      where: { status: "ACTIVE", ...(classRoomId ? { classRoomId } : {}) },
+      where: { schoolId, status: "ACTIVE", ...(classRoomId ? { classRoomId } : {}) },
       select: {
         id: true, firstName: true, lastName: true, admissionNo: true,
         classRoom: { select: { name: true } },

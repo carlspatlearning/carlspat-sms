@@ -11,9 +11,9 @@
     {
       "name": "Web App (Next.js)",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["run", "dev", "--", "-p", "3001"],
       "cwd": "web",
-      "port": 3000
+      "port": 3001
     }
   ]
 }

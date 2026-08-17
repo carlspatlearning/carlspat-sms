@@ -25,6 +25,7 @@ import uploadRoutes from "./routes/uploads";
 import userRoutes from "./routes/users";
 import expenseRoutes from "./routes/expenses";
 import resourceRoutes from "./routes/resources";
+import platformRoutes from "./routes/platform";
 
 export function createApp() {
   const app = express();
@@ -93,6 +94,8 @@ export function createApp() {
   app.use("/api/v1/users", userRoutes);
   app.use("/api/v1/expenses", expenseRoutes);
   app.use("/api/v1/resources", resourceRoutes);
+  // Sits outside the school fence — see routes/platform.ts.
+  app.use("/api/v1/platform", platformRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
