@@ -1,4 +1,3 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "ignoreCommand": "test \"$VERCEL_GIT_COMMIT_REF\" = \"zap-test\""
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }
