@@ -72,24 +72,35 @@ router.post(
     const schoolId = currentSchoolId(req);
     const { firstName, lastName, email, phone, password, studentIds, ...profile } = req.body;
 
-    const parent = await prisma.parent.create({
+    const user = await prisma.user.create({
       data: {
-        ...profile,
         schoolId,
-        user: {
-          create: {
-            schoolId,
-            email: email.toLowerCase(),
-            passwordHash: await hashPassword(password),
-            role: Role.PARENT,
-            firstName,
-            lastName,
-            phone,
-          },
-        },
+        email: email.toLowerCase(),
+        passwordHash: await hashPassword(password),
+        role: Role.PARENT,
+        firstName,
+        lastName,
+        phone,
       },
-      include: { user: { select: { id: true, email: true } } },
     });
+
+    let parent;
+    try {
+      parent = await prisma.parent.create({
+        data: {
+          ...profile,
+          schoolId,
+          userId: user.id,
+        },
+        include: { user: { select: { id: true, email: true } } },
+      });
+    } catch (err) {
+      await prisma.user.delete({ where: { id: user.id } }).catch((cleanupErr) => {
+        console.error("Failed to clean up parent user after parent profile create failed:", cleanupErr);
+      });
+      throw err;
+    }
+
     if (studentIds?.length) {
       // Scoped, so an id from another school links nothing rather than handing
       // this parent access to a child who is not theirs.
@@ -217,3 +228,4 @@ router.post(
 );
 
 export default router;
+

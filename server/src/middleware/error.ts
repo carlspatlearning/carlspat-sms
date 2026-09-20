@@ -18,7 +18,12 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
 
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === "P2002") {
-      const target = (err.meta?.target as string[] | undefined)?.join(", ");
+      const rawTarget = err.meta?.target;
+      const target = Array.isArray(rawTarget)
+        ? rawTarget.join(", ")
+        : typeof rawTarget === "string"
+          ? rawTarget
+          : undefined;
       return res.status(409).json({
         success: false,
         message: `A record with this ${target ?? "value"} already exists`,
@@ -47,3 +52,4 @@ export function asyncHandler<T extends Request>(
     fn(req as T, res, next).catch(next);
   };
 }
+
