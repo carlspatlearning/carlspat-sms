@@ -6,11 +6,22 @@ export const metadata: Metadata = {
   title: { default: "Carlspat Private School", template: "%s · Carlspat Private School" },
   description:
     "Carlspat Private School Management System — Emphasis on All-Round Development. Ido Ekiti, Ekiti State, Nigeria.",
+  applicationName: "Carlspat School Management",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1e3a5f",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
