@@ -218,7 +218,7 @@ export async function renderReportCard(data: ReportCardData, verifyUrl: string):
   doc.moveTo(420, footY + 64).lineTo(556, footY + 64).stroke("#000");
   doc.fillColor("#000").fontSize(8).text("Head Teacher's Signature & Date", 420, footY + 68, { width: 136, align: "center" });
 
-  // Promotion stamp: average ≥ 50% → PROMOTED, below 50% → REPEAT
+  // Third Term promotion stamp (earlier terms always have a null decision)
   if (data.result.promotionDecision) {
     const stamp = data.result.promotionDecision;
     const color = stamp === "PROMOTED" ? "#15803d" : "#b91c1c";

@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
 import { resolveGrade, ordinal } from "../utils/grading";
+import { promotionDecisionForTerm, PromotionDecision } from "../utils/promotion";
 
 export interface SubjectResult {
   subjectId: string;
@@ -17,8 +18,6 @@ export interface SubjectResult {
   /** Average of term totals (previous + current), on the 0–maxTotal scale. */
   cumulativeAvg: number | null;
 }
-
-export type PromotionDecision = "PROMOTED" | "REPEAT";
 
 export interface StudentTermResult {
   studentId: string;
@@ -38,11 +37,9 @@ export interface StudentTermResult {
   cumulativeAverage: number | null;
   /** True when this is the last term of the academic session. */
   isFinalTerm: boolean;
-  /** Stamped on the report card: average ≥ 50% → PROMOTED, below 50% → REPEAT. */
+  /** Third Term only: average ≥ 50% → PROMOTED, below 50% → REPEAT. */
   promotionDecision: PromotionDecision | null;
 }
-
-const PROMOTION_THRESHOLD = 50;
 
 /** Full computed result sheet for one student in one term. */
 export async function computeStudentResult(studentId: string, termId: string): Promise<StudentTermResult> {
@@ -157,10 +154,9 @@ export async function computeStudentResult(studentId: string, termId: string): P
       ? Math.round((termAverages.reduce((a, b) => a + b, 0) / termAverages.length) * 10) / 10
       : null;
 
-  // Promotion stamp on every report card: average score ≥ 50% → PROMOTED,
-  // below 50% → REPEAT. No stamp when there are no scores yet.
-  const promotionDecision: PromotionDecision | null =
-    subjects.length > 0 ? (average >= PROMOTION_THRESHOLD ? "PROMOTED" : "REPEAT") : null;
+  // Promotion/repetition is an end-of-session decision and must only appear
+  // on Third Term report cards. Earlier-term reports always return null.
+  const promotionDecision = promotionDecisionForTerm(term?.name, average, subjects.length > 0);
 
   return {
     studentId,
