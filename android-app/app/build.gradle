@@ -55,7 +55,7 @@ android {
     namespace "com.carlspat.sms"
     defaultConfig {
         applicationId "com.carlspat.sms"
-        minSdkVersion 21
+        minSdkVersion 24
         targetSdkVersion 36
         versionCode 1
         versionName "1"
