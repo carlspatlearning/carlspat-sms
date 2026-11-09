@@ -17,7 +17,7 @@
   "maskableIconUrl": "https://carlspat-sms.vercel.app/icons/icon-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
   "signingKey": {
-    "path": "C:\\Users\\Carlspat Private\\Documents\\ChatGPT\\SMSApp\\carlspat-sms-github\\android-app\\android.keystore",
+    "path": "./release-signing.jks",
     "alias": "carlspat"
   },
   "appVersionName": "1",

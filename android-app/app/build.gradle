@@ -150,9 +150,24 @@ android {
 
         
     }
+    signingConfigs {
+        release {
+            def signingPassword = System.getenv("ANDROID_SIGNING_PASSWORD")
+            def signingKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (signingPassword == null || signingKeystorePath == null) {
+                throw new GradleException("Release signing environment is not configured")
+            }
+            storeFile file(signingKeystorePath)
+            storeType "PKCS12"
+            storePassword signingPassword
+            keyAlias "carlspat"
+            keyPassword signingPassword
+        }
+    }
     buildTypes {
         release {
             minifyEnabled true
+            signingConfig signingConfigs.release
         }
     }
     compileOptions {

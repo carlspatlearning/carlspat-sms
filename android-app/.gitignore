@@ -11,3 +11,6 @@ signing-credentials.txt
 manifest-checksum.txt
 sdk/
 manifest-checksum.txt
+release-signing-password.txt
+release-signing-key-base64.txt
+*signing-password*.txt

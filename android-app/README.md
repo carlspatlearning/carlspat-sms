@@ -9,11 +9,16 @@ This project packages the existing Carlspat School Management web application as
 
 ## Build
 
-Install the pinned Node dependency, then run Bubblewrap from this directory:
+The release APK is built by the GitHub Actions workflow in `.github/workflows/android-apk.yml`. It signs the release with the private key supplied through two encrypted repository Actions secrets:
+
+- `ANDROID_SIGNING_KEY_B64`: base64-encoded PKCS#12 keystore.
+- `ANDROID_SIGNING_PASSWORD`: keystore and key password.
+
+The signing keystore is excluded from Git. Keep a secure backup of both the keystore and its password: future app updates must use the same signing key.
+
+For a local build, install the pinned Node dependency and run Bubblewrap from this directory:
 
 ```powershell
 npm ci
 node node_modules/@bubblewrap/cli/bin/bubblewrap.js build
 ```
-
-The signing keystore and credentials are deliberately excluded from Git. Keep the release-key backup safe: every future update must be signed with the same key.
