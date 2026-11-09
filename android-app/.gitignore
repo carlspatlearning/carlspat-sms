@@ -1,0 +1,13 @@
+node_modules/
+.gradle/
+.sdk-link/
+build/
+app/build/
+*.apk
+*.aab
+*.keystore
+*.jks
+signing-credentials.txt
+manifest-checksum.txt
+sdk/
+manifest-checksum.txt

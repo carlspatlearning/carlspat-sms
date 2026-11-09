@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.carlspat.sms",
+      "sha256_cert_fingerprints": ["31:02:66:33:41:9A:FD:94:B8:26:14:AC:04:91:CC:BB:8E:D5:9E:AB:B6:AB:A5:9D:69:FB:43:97:46:03:D0:3D"]
+    }
+  }
+]
