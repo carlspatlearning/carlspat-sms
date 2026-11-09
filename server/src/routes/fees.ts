@@ -28,6 +28,7 @@ router.get(
       ? await prisma.term.findUnique({ where: { id: termId }, include: { session: { select: { name: true } } } })
       : await prisma.term.findFirst({ where: { isCurrent: true, schoolId }, include: { session: { select: { name: true } } } });
     if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No current term configured");
+    const currentTerm = term;
 
     const [school, students] = await Promise.all([
       prisma.school.findUnique({ where: { id: schoolId }, select: { name: true, address: true } }),
@@ -44,7 +45,7 @@ router.get(
       student: typeof students[number]; expected: number; paid: number; waived: number; outstanding: number;
     }> = [];
     for (const student of students) {
-      const balance = await getFeeBalance(student.id, term.id);
+      const balance = await getFeeBalance(student.id, currentTerm.id);
       if (balance.outstanding > 0) debtors.push({ student, ...balance });
     }
     debtors.sort((a, b) => b.outstanding - a.outstanding);
@@ -72,7 +73,7 @@ router.get(
       doc.fillColor("#1e3a5f").font("Helvetica-Bold").fontSize(12)
         .text("OUTSTANDING FEES / DEBTORS REPORT", left, 65, { width: tableWidth, align: "center" });
       doc.fillColor("#374151").font("Helvetica").fontSize(9)
-        .text(`${term.name} · ${term.session.name} session  |  Debtors: ${debtors.length}  |  Total outstanding: ${money(totalOutstanding)}`, left, 84, { width: tableWidth, align: "center" });
+        .text(`${currentTerm.name} · ${currentTerm.session.name} session  |  Debtors: ${debtors.length}  |  Total outstanding: ${money(totalOutstanding)}`, left, 84, { width: tableWidth, align: "center" });
       doc.fillColor("#6b7280").fontSize(8)
         .text(`Generated: ${generatedAt.toLocaleString("en-GB")}`, left, 99, { width: tableWidth, align: "right" });
       doc.moveTo(left, 114).lineTo(left + tableWidth, 114).strokeColor("#1e3a5f").lineWidth(1).stroke();
