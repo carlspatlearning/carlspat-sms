@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Download, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { formatNaira } from "@/lib/utils";
@@ -72,6 +72,7 @@ function StaffFees() {
   const [waivers, setWaivers] = useState<Waiver[]>([]);
   const [students, setStudents] = useState<StudentOpt[]>([]);
   const [saving, setSaving] = useState(false);
+  const [exportingDebtors, setExportingDebtors] = useState(false);
 
   // ── Student fee items ────────────────────────────────────────────
   const [feeStudent, setFeeStudent] = useState<StudentOpt | null>(null);
@@ -285,6 +286,21 @@ function StaffFees() {
     }
   }
 
+  async function downloadDebtorsPdf() {
+    if (!term) return;
+    setExportingDebtors(true);
+    try {
+      await api.download(
+        `/fees/debtors/pdf?termId=${encodeURIComponent(term.id)}`,
+        `debtors-${term.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.pdf`,
+      );
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Could not download the debtors PDF." });
+    } finally {
+      setExportingDebtors(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader title="Fee Management" description={term ? `${term.name}, ${term.session.name} session` : undefined}>
@@ -337,10 +353,14 @@ function StaffFees() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>
               Debtors {debtors && <span className="text-sm font-normal text-muted-foreground">— total outstanding {formatNaira(debtors.totalOutstanding)}</span>}
             </CardTitle>
+            <Button variant="outline" size="sm" onClick={downloadDebtorsPdf} disabled={!term || exportingDebtors}>
+              {exportingDebtors ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Download PDF
+            </Button>
           </CardHeader>
           <CardContent>
             <Table>

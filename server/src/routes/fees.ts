@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { Role } from "@prisma/client";
+import PDFDocument from "pdfkit";
 import { prisma } from "../lib/prisma";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../middleware/error";
@@ -14,6 +15,130 @@ const router = Router();
 router.use(authenticate, requireActiveSchool);
 
 const FEE_MANAGERS: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.ACCOUNTANT];
+
+// GET /fees/debtors/pdf?termId=&classRoomId= — downloadable outstanding-fees report
+router.get(
+  "/debtors/pdf",
+  authorize(...FEE_MANAGERS),
+  asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
+    const termId = req.query.termId as string | undefined;
+    const classRoomId = req.query.classRoomId as string | undefined;
+    const term = termId
+      ? await prisma.term.findUnique({ where: { id: termId }, include: { session: { select: { name: true } } } })
+      : await prisma.term.findFirst({ where: { isCurrent: true, schoolId }, include: { session: { select: { name: true } } } });
+    if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No current term configured");
+
+    const [school, students] = await Promise.all([
+      prisma.school.findUnique({ where: { id: schoolId }, select: { name: true, address: true } }),
+      prisma.student.findMany({
+        where: { schoolId, status: "ACTIVE", ...(classRoomId ? { classRoomId } : {}) },
+        select: {
+          id: true, firstName: true, lastName: true, admissionNo: true,
+          classRoom: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const debtors: Array<{
+      student: typeof students[number]; expected: number; paid: number; waived: number; outstanding: number;
+    }> = [];
+    for (const student of students) {
+      const balance = await getFeeBalance(student.id, term.id);
+      if (balance.outstanding > 0) debtors.push({ student, ...balance });
+    }
+    debtors.sort((a, b) => b.outstanding - a.outstanding);
+    const totalOutstanding = debtors.reduce((sum, row) => sum + row.outstanding, 0);
+    const generatedAt = new Date();
+    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 32, bufferPages: true });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+    const pageWidth = doc.page.width;
+    const left = 32;
+    const tableWidth = pageWidth - left * 2;
+    const columns = [30, 170, 100, 112, 105, 90, tableWidth - 607];
+    const headers = ["#", "Student name", "Admission No.", "Class", "Expected", "Paid", "Outstanding"];
+    const money = (amount: number) => `NGN ${amount.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const schoolName = school?.name ?? "School";
+
+    function drawPageHeader() {
+      doc.fillColor("#1e3a5f").font("Helvetica-Bold").fontSize(16)
+        .text(schoolName.toUpperCase(), left, 30, { width: tableWidth, align: "center" });
+      if (school?.address) {
+        doc.fillColor("#6b7280").font("Helvetica").fontSize(8)
+          .text(school.address, left, 50, { width: tableWidth, align: "center" });
+      }
+      doc.fillColor("#1e3a5f").font("Helvetica-Bold").fontSize(12)
+        .text("OUTSTANDING FEES / DEBTORS REPORT", left, 65, { width: tableWidth, align: "center" });
+      doc.fillColor("#374151").font("Helvetica").fontSize(9)
+        .text(`${term.name} · ${term.session.name} session  |  Debtors: ${debtors.length}  |  Total outstanding: ${money(totalOutstanding)}`, left, 84, { width: tableWidth, align: "center" });
+      doc.fillColor("#6b7280").fontSize(8)
+        .text(`Generated: ${generatedAt.toLocaleString("en-GB")}`, left, 99, { width: tableWidth, align: "right" });
+      doc.moveTo(left, 114).lineTo(left + tableWidth, 114).strokeColor("#1e3a5f").lineWidth(1).stroke();
+    }
+
+    function drawTableHeader(y: number) {
+      doc.rect(left, y, tableWidth, 22).fill("#1e3a5f");
+      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(8);
+      let x = left + 4;
+      headers.forEach((header, index) => {
+        doc.text(header, x, y + 7, { width: columns[index] - 8, lineBreak: false, align: index >= 4 ? "right" : "left" });
+        x += columns[index];
+      });
+    }
+
+    drawPageHeader();
+    let y = 122;
+    drawTableHeader(y);
+    y += 22;
+    debtors.forEach((row, index) => {
+      if (y + 20 > doc.page.height - 42) {
+        doc.addPage({ size: "A4", layout: "landscape", margin: 32 });
+        drawPageHeader();
+        y = 122;
+        drawTableHeader(y);
+        y += 22;
+      }
+      if (index % 2 === 1) doc.rect(left, y, tableWidth, 20).fill("#f3f4f6");
+      doc.fillColor("#111827").font("Helvetica").fontSize(8);
+      const values = [
+        String(index + 1),
+        `${row.student.lastName} ${row.student.firstName}`,
+        row.student.admissionNo,
+        row.student.classRoom?.name ?? "—",
+        money(row.expected),
+        money(row.paid),
+        money(row.outstanding),
+      ];
+      let x = left + 4;
+      values.forEach((value, col) => {
+        doc.text(value, x, y + 6, { width: columns[col] - 8, lineBreak: false, align: col >= 4 ? "right" : "left" });
+        x += columns[col];
+      });
+      doc.moveTo(left, y + 20).lineTo(left + tableWidth, y + 20).strokeColor("#e5e7eb").lineWidth(0.4).stroke();
+      y += 20;
+    });
+    if (debtors.length === 0) {
+      doc.fillColor("#374151").font("Helvetica").fontSize(10)
+        .text("No outstanding fees for this term.", left, y + 12, { width: tableWidth, align: "center" });
+    }
+
+    const pageCount = doc.bufferedPageRange().count;
+    for (let page = 0; page < pageCount; page++) {
+      doc.switchToPage(page);
+      doc.fillColor("#6b7280").font("Helvetica").fontSize(7)
+        .text(`${schoolName} — Confidential`, left, doc.page.height - 24, { width: tableWidth / 2 })
+        .text(`Page ${page + 1} of ${pageCount}`, left, doc.page.height - 24, { width: tableWidth, align: "right" });
+    }
+    doc.end();
+    const pdf = await finished;
+    const filename = `debtors-${term.name.replace(/[^a-z0-9]+/gi, "-")}-${generatedAt.toISOString().slice(0, 10)}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(pdf);
+  })
+);
 
 // ── Fee categories ───────────────────────────────────────────────────────────
 
