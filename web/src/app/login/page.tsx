@@ -66,10 +66,8 @@ function LoginForm() {
       </div>
       <div className="mb-6 text-center">
         {school?.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img src={school.logoUrl} alt="School logo" className="mx-auto h-16 w-16 rounded-full object-cover" />
         ) : (
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icons/icon-192.png" alt="OlufunmilyoSMS school logo" className="mx-auto h-16 w-16 rounded-full object-contain" />
         )}
         <h1 className="mt-3 text-2xl font-bold">{school?.name ?? "Carlspat Private School"}</h1>

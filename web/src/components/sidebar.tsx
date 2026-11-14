@@ -67,10 +67,8 @@ export function Sidebar({
       >
         <div className="flex h-16 items-center gap-3 border-b px-4">
           {school?.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img src={school.logoUrl} alt="School logo" className="h-9 w-9 rounded-full object-cover" />
           ) : (
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/icons/icon-192.png" alt="OlufunmilyoSMS school logo" className="h-9 w-9 rounded-full object-contain" />
           )}
           <div className="min-w-0">
