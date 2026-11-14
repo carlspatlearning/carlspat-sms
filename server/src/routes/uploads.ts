@@ -40,7 +40,7 @@ const upload = multer({
 // POST /uploads/passport - student passport photographs (admin)
 router.post(
   "/passport",
-  authorize(...ADMINS),
+  authorize(...ADMINS, Role.STAKEHOLDER),
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw ApiError.badRequest("No file uploaded (use multipart field 'file')");

@@ -25,4 +25,5 @@ export const ROLE_LABELS: Record<string, string> = {
   PARENT: "Parent",
   STUDENT: "Student",
   ACCOUNTANT: "Bursar",
+  STAKEHOLDER: "Stakeholder",
 };

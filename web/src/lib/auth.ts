@@ -4,7 +4,7 @@ export interface SessionUser {
   id: string;
   email: string;
   // PLATFORM_OWNER belongs to no school and uses /platform, never /dashboard.
-  role: "PLATFORM_OWNER" | "SUPER_ADMIN" | "ADMIN" | "TEACHER" | "PARENT" | "STUDENT" | "ACCOUNTANT";
+  role: "PLATFORM_OWNER" | "SUPER_ADMIN" | "ADMIN" | "TEACHER" | "PARENT" | "STUDENT" | "ACCOUNTANT" | "STAKEHOLDER";
   firstName: string;
   lastName: string;
   phone: string | null;
@@ -47,7 +47,7 @@ export function setTokens(accessToken: string, refreshToken: string) {
 
 /** Where this user belongs after signing in. */
 export function homePathFor(user: SessionUser): string {
-  return user.role === "PLATFORM_OWNER" ? "/platform" : "/dashboard";
+  return user.role === "PLATFORM_OWNER" ? "/platform" : user.role === "STAKEHOLDER" ? "/dashboard/stakeholder-registrations" : "/dashboard";
 }
 
 export function getUser(): SessionUser | null {

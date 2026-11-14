@@ -23,6 +23,7 @@ const audienceForRole: Record<Role, Audience[]> = {
   TEACHER: [Audience.ALL, Audience.TEACHERS, Audience.STAFF],
   PARENT: [Audience.ALL, Audience.PARENTS],
   STUDENT: [Audience.ALL, Audience.STUDENTS],
+  STAKEHOLDER: [Audience.ALL],
 };
 
 // GET /announcements — filtered to the viewer's audience
@@ -77,7 +78,7 @@ router.post(
         : data.audience === Audience.PARENTS ? [Role.PARENT]
         : data.audience === Audience.STUDENTS ? [Role.STUDENT]
         : data.audience === Audience.STAFF ? [Role.TEACHER, Role.ACCOUNTANT, Role.ADMIN]
-        : [Role.TEACHER, Role.PARENT, Role.STUDENT, Role.ACCOUNTANT];
+        : [Role.TEACHER, Role.PARENT, Role.STUDENT, Role.ACCOUNTANT, Role.STAKEHOLDER];
       // The school filter matters most here: this list becomes actual emails and
       // text messages. Unscoped, one school's notice would be sent to every
       // parent on the platform.

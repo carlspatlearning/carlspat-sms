@@ -18,7 +18,7 @@ const GREY = "#6b7280";
 
 const ROLE_LABELS: Record<string, string> = {
   SUPER_ADMIN: "Super Admin", ADMIN: "School Admin", TEACHER: "Teacher",
-  ACCOUNTANT: "Bursar", PARENT: "Parent", STUDENT: "Student",
+  ACCOUNTANT: "Bursar", PARENT: "Parent", STUDENT: "Student", STAKEHOLDER: "Stakeholder",
 };
 
 const router = Router();
@@ -34,7 +34,7 @@ router.get(
     // A printable directory of names, emails and phone numbers — the single
     // most damaging thing to leak, so it is scoped like everything else.
     const users = await prisma.user.findMany({
-      where: { schoolId },
+      where: { schoolId, role: { not: Role.STAKEHOLDER } },
       select: {
         firstName: true, lastName: true, email: true, phone: true,
         role: true, isActive: true, createdAt: true, lastLoginAt: true,
@@ -152,7 +152,7 @@ router.get(
     const { q, role } = req.query as Record<string, string | undefined>;
     const where = {
       schoolId: currentSchoolId(req),
-      ...(role ? { role: role as Role } : {}),
+      role: role && role !== Role.STAKEHOLDER ? role as Role : { not: Role.STAKEHOLDER },
       ...(q
         ? {
             OR: [
@@ -199,6 +199,7 @@ router.post(
   asyncHandler(async (req, res) => {
     // Only a super admin may create other admins or super admins
     const { role } = req.body as { role: Role };
+    if (role === Role.STAKEHOLDER) throw ApiError.badRequest("Create stakeholder accounts from the Stakeholder Schools screen.");
     if ((role === Role.ADMIN || role === Role.SUPER_ADMIN) && req.auth!.role !== Role.SUPER_ADMIN) {
       throw ApiError.forbidden("Only the super admin can create admin accounts");
     }
@@ -241,7 +242,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const target = await prisma.user.findUnique({
       where: { id: req.params.id },
-      include: { teacher: true, parent: true, student: true },
+      include: { teacher: true, parent: true, student: true, stakeholderSchool: true },
     });
     if (!target || target.schoolId !== currentSchoolId(req)) throw ApiError.notFound("User not found");
     if (
@@ -255,6 +256,7 @@ router.patch(
       firstName?: string; lastName?: string; email?: string; phone?: string;
       role?: Role; isActive?: boolean; newPassword?: string;
     };
+    if (target.stakeholderSchool || role === Role.STAKEHOLDER) throw ApiError.badRequest("Manage stakeholder accounts from the Stakeholder Schools screen.");
     if (role !== undefined && role !== target.role) {
       // Promoting to admin levels is a super-admin-only action
       if ((role === Role.ADMIN || role === Role.SUPER_ADMIN) && req.auth!.role !== Role.SUPER_ADMIN) {
@@ -303,6 +305,7 @@ router.delete(
         teacher: true,
         parent: true,
         student: true,
+        stakeholderSchool: true,
         _count: { select: { scoresRecorded: true, attendanceMarked: true, paymentsRecorded: true } },
       },
     });
@@ -335,6 +338,7 @@ router.delete(
     if (target.student) {
       throw ApiError.badRequest("This is a student account — remove the student from the Students page instead");
     }
+    if (target.stakeholderSchool) throw ApiError.badRequest("This is a stakeholder account — manage it from the Stakeholder Schools page.");
     const hasRecords =
       target._count.scoresRecorded + target._count.attendanceMarked + target._count.paymentsRecorded > 0;
     if (hasRecords) {

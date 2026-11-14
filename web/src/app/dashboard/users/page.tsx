@@ -167,7 +167,7 @@ export default function UsersPage() {
       <div className="mb-4 max-w-xs">
         <Select value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="">All roles</option>
-          {Object.entries(ROLE_LABELS).map(([value, label]) => (
+          {Object.entries(ROLE_LABELS).filter(([value]) => value !== "STAKEHOLDER").map(([value, label]) => (
             <option key={value} value={value}>{label}</option>
           ))}
         </Select>

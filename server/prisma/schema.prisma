@@ -22,6 +22,29 @@ enum Role {
   PARENT
   STUDENT
   ACCOUNTANT
+  STAKEHOLDER
+}
+
+enum StakeholderStatus {
+  APPROVED
+  INACTIVE
+}
+
+enum CandidateExam {
+  WAEC
+  NECO
+  JAMB
+  BECE
+  CASS
+  COMMON_ENTRANCE
+  WAEC_NECO
+  WAEC_NECO_JAMB
+}
+
+enum CandidateRegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 // Whether a school may currently use the system. Access is gated on this, so a
@@ -94,23 +117,23 @@ enum PromotionType {
 // ──────────────────────────── School / settings ────────────────────────────
 
 model School {
-  id              String   @id @default(cuid())
+  id              String  @id @default(cuid())
   // Short handle used in URLs and in staff-facing lists, e.g. "carlspat".
-  slug            String   @unique
+  slug            String  @unique
   name            String
   // Prefix for admission and receipt numbers, e.g. "CPS" -> CPS/2026/0001 and
   // CPS-RCP-2026-00001. Each school needs its own or the numbers read as
   // another school's.
-  numberPrefix    String   @default("SCH")
-  motto           String   @default("")
-  address         String   @default("")
-  phone           String   @default("")
-  email           String   @default("")
+  numberPrefix    String  @default("SCH")
+  motto           String  @default("")
+  address         String  @default("")
+  phone           String  @default("")
+  email           String  @default("")
   logoUrl         String?
   stampUrl        String?
   headTeacherName String?
-  currency        String   @default("NGN")
-  isActive        Boolean  @default(true)
+  currency        String  @default("NGN")
+  isActive        Boolean @default(true)
 
   // ── Subscription ──
   // A school keeps its data when a subscription lapses; only access stops.
@@ -131,32 +154,61 @@ model School {
   // This is a live secret key. It is never returned by any API response — see
   // the platform and settings routes, which strip it — and it must not be added
   // to any select that feeds a response body.
-  paystackSecretKey  String?
+  paystackSecretKey String?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  users              User[]
-  students           Student[]
-  teachers           Teacher[]
-  parents            Parent[]
-  classes            ClassRoom[]
-  subjects           Subject[]
-  sessions           AcademicSession[]
-  terms              Term[]
-  assessmentTypes    AssessmentType[]
-  gradeScales        GradeScale[]
-  feeCategories      FeeCategory[]
-  feeStructures      FeeStructure[]
-  studentFeeItems    StudentFeeItem[]
-  payments           Payment[]
-  announcements      Announcement[]
-  expenseCategories  ExpenseCategory[]
-  expenses           Expense[]
-  resources          Resource[]
-  auditLogs          AuditLog[]
+  users                  User[]
+  students               Student[]
+  teachers               Teacher[]
+  parents                Parent[]
+  classes                ClassRoom[]
+  subjects               Subject[]
+  sessions               AcademicSession[]
+  terms                  Term[]
+  assessmentTypes        AssessmentType[]
+  gradeScales            GradeScale[]
+  feeCategories          FeeCategory[]
+  feeStructures          FeeStructure[]
+  studentFeeItems        StudentFeeItem[]
+  payments               Payment[]
+  announcements          Announcement[]
+  expenseCategories      ExpenseCategory[]
+  expenses               Expense[]
+  resources              Resource[]
+  auditLogs              AuditLog[]
+  stakeholderSchools     StakeholderSchool[]
+  candidateRegistrations CandidateRegistration[]
+  stakeholderServicePrices StakeholderServicePrice[]
+  desktopSyncRecords      DesktopSyncRecord[]
 
   @@index([subscriptionStatus])
+}
+
+// Append-only source mirror for records created by offline desktop installs.
+// It is deliberately separate from the website's normalized records so a
+// sync cannot accidentally overwrite a web-managed record with local ids.
+model DesktopSyncRecord {
+  id             String   @id @default(cuid())
+  schoolId       String
+  deviceId       String
+  tableName      String
+  localId        String
+  revision       Int
+  eventId        String
+  operation      String
+  payload        Json?
+  sourceUpdatedAt String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, deviceId, tableName, localId])
+  @@unique([eventId])
+  @@index([schoolId, deviceId, tableName])
+  @@index([schoolId, updatedAt])
 }
 
 model AcademicSession {
@@ -168,8 +220,9 @@ model AcademicSession {
   isCurrent Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  terms  Term[]
+  school                 School                  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  terms                  Term[]
+  candidateRegistrations CandidateRegistration[]
 
   @@unique([schoolId, name])
 }
@@ -249,21 +302,89 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  school           School?        @relation(fields: [schoolId], references: [id])
-  teacher          Teacher?
-  parent           Parent?
-  student          Student?
-  sentMessages     Message[]      @relation("SentMessages")
-  receivedMessages Message[]      @relation("ReceivedMessages")
-  announcements    Announcement[]
-  auditLogs        AuditLog[]
-  paymentsRecorded  Payment[]   @relation("RecordedPayments")
-  attendanceMarked  Attendance[] @relation("MarkedAttendance")
-  scoresRecorded    Score[]      @relation("RecordedScores")
-  expensesRecorded  Expense[]    @relation("RecordedExpenses")
-  resourcesUploaded Resource[]   @relation("UploadedResources")
+  school                         School?                 @relation(fields: [schoolId], references: [id])
+  teacher                        Teacher?
+  parent                         Parent?
+  student                        Student?
+  sentMessages                   Message[]               @relation("SentMessages")
+  receivedMessages               Message[]               @relation("ReceivedMessages")
+  announcements                  Announcement[]
+  auditLogs                      AuditLog[]
+  paymentsRecorded               Payment[]               @relation("RecordedPayments")
+  attendanceMarked               Attendance[]            @relation("MarkedAttendance")
+  scoresRecorded                 Score[]                 @relation("RecordedScores")
+  expensesRecorded               Expense[]               @relation("RecordedExpenses")
+  resourcesUploaded              Resource[]              @relation("UploadedResources")
+  stakeholderSchool              StakeholderSchool?
+  reviewedCandidateRegistrations CandidateRegistration[] @relation("CandidateRegistrationReviewer")
 
   @@index([role])
+}
+
+model StakeholderSchool {
+  id                 String            @id @default(cuid())
+  schoolId           String
+  userId             String            @unique
+  name               String
+  representativeName String
+  status             StakeholderStatus @default(APPROVED)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  school        School                  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  registrations CandidateRegistration[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId, status])
+}
+
+model CandidateRegistration {
+  id                  String                      @id @default(cuid())
+  schoolId            String
+  stakeholderSchoolId String
+  sessionId           String
+  firstName           String
+  lastName            String
+  gender              Gender?
+  dateOfBirth         DateTime?
+  exam                CandidateExam
+  passportUrl         String?
+  amountPaid          Decimal                     @default(0) @db.Decimal(12, 2)
+  amountDue           Decimal                     @default(0) @db.Decimal(12, 2)
+  services            String[]                    @default([])
+  applicationData     Json                        @default("{}") @db.JsonB
+  status              CandidateRegistrationStatus @default(PENDING)
+  decisionNote        String?
+  reviewedById        String?
+  reviewedAt          DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+
+  school            School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  stakeholderSchool StakeholderSchool @relation(fields: [stakeholderSchoolId], references: [id], onDelete: Cascade)
+  session           AcademicSession   @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  reviewedBy        User?             @relation("CandidateRegistrationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, status, createdAt])
+  @@index([stakeholderSchoolId, createdAt])
+}
+
+model StakeholderServicePrice {
+  id        String        @id @default(cuid())
+  schoolId  String
+  key       String
+  name      String
+  exam      CandidateExam?
+  amount    Decimal       @db.Decimal(12, 2)
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, key])
+  @@index([schoolId, isActive])
 }
 
 model Teacher {
@@ -325,17 +446,17 @@ model Student {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user            User?            @relation(fields: [userId], references: [id])
-  parent          Parent?          @relation(fields: [parentId], references: [id])
-  classRoom       ClassRoom?       @relation(fields: [classRoomId], references: [id])
-  attendance      Attendance[]
-  scores          Score[]
-  termReports     TermReport[]
-  payments        Payment[]
-  feeWaivers      FeeWaiver[]
-  feeItems        StudentFeeItem[]
-  promotions      Promotion[]
+  school      School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user        User?            @relation(fields: [userId], references: [id])
+  parent      Parent?          @relation(fields: [parentId], references: [id])
+  classRoom   ClassRoom?       @relation(fields: [classRoomId], references: [id])
+  attendance  Attendance[]
+  scores      Score[]
+  termReports TermReport[]
+  payments    Payment[]
+  feeWaivers  FeeWaiver[]
+  feeItems    StudentFeeItem[]
+  promotions  Promotion[]
 
   // Admission numbers restart at 1 for each school (CPS/2026/0001), so they are
   // only unique within a school, never across the platform.
@@ -369,7 +490,7 @@ model ClassRoom {
 }
 
 model Subject {
-  id       String  @id @default(cuid())
+  id       String @id @default(cuid())
   schoolId String
   name     String
   code     String
@@ -456,13 +577,13 @@ model TermReport {
 }
 
 model Promotion {
-  id            String        @id @default(cuid())
-  studentId     String
-  fromClass     String
-  toClass       String
-  type          PromotionType @default(PROMOTED)
-  sessionName   String
-  promotedAt    DateTime      @default(now())
+  id          String        @id @default(cuid())
+  studentId   String
+  fromClass   String
+  toClass     String
+  type        PromotionType @default(PROMOTED)
+  sessionName String
+  promotedAt  DateTime      @default(now())
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 }
@@ -667,9 +788,9 @@ model Resource {
   uploadedById String
   createdAt    DateTime     @default(now())
 
-  school      School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  classRoom   ClassRoom? @relation(fields: [classRoomId], references: [id])
-  uploadedBy  User       @relation("UploadedResources", fields: [uploadedById], references: [id])
+  school     School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classRoom  ClassRoom? @relation(fields: [classRoomId], references: [id])
+  uploadedBy User       @relation("UploadedResources", fields: [uploadedById], references: [id])
 
   @@index([schoolId, createdAt])
   @@index([classRoomId])

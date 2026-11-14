@@ -3,10 +3,10 @@ import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Carlspat Private School", template: "%s · Carlspat Private School" },
+  title: { default: "OlufunmilyoSMS", template: "%s · OlufunmilyoSMS" },
   description:
-    "Carlspat Private School Management System — Emphasis on All-Round Development. Ido Ekiti, Ekiti State, Nigeria.",
-  applicationName: "Carlspat School Management",
+    "OlufunmilyoSMS Management System — Emphasis on All-Round Development. Ido Ekiti, Ekiti State, Nigeria.",
+  applicationName: "OlufunmilyoSMS",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [

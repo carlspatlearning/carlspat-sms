@@ -32,9 +32,11 @@ const NAV: NavItem[] = [
   { href: "/dashboard/payments", label: "Payments", icon: Receipt, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT", "PARENT"] },
   { href: "/dashboard/expenditures", label: "Expenditures", icon: TrendingDown, roles: ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT"] },
   { href: "/dashboard/resources", label: "Resources", icon: FolderOpen, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT"] },
-  { href: "/dashboard/announcements", label: "Announcements", icon: Megaphone, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT", "ACCOUNTANT"] },
-  { href: "/dashboard/messages", label: "Messages", icon: MessageSquare, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT", "ACCOUNTANT"] },
+  { href: "/dashboard/announcements", label: "Announcements", icon: Megaphone, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT", "ACCOUNTANT", "STAKEHOLDER"] },
+  { href: "/dashboard/messages", label: "Messages", icon: MessageSquare, roles: ["SUPER_ADMIN", "ADMIN", "TEACHER", "PARENT", "STUDENT", "ACCOUNTANT", "STAKEHOLDER"] },
   { href: "/dashboard/users", label: "User Accounts", icon: UserCog, roles: ["SUPER_ADMIN", "ADMIN"] },
+  { href: "/dashboard/stakeholders", label: "Stakeholder Schools", icon: School, roles: ["SUPER_ADMIN", "ADMIN"] },
+  { href: "/dashboard/stakeholder-registrations", label: "Exam Registrations", icon: GraduationCap, roles: ["STAKEHOLDER"] },
   { href: "/dashboard/settings", label: "School Settings", icon: Settings, roles: ["SUPER_ADMIN", "ADMIN"] },
 ];
 
@@ -68,9 +70,8 @@ export function Sidebar({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={school.logoUrl} alt="School logo" className="h-9 w-9 rounded-full object-cover" />
           ) : (
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
-              {(school?.name ?? "CPS").slice(0, 1)}
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icons/icon-192.png" alt="OlufunmilyoSMS school logo" className="h-9 w-9 rounded-full object-contain" />
           )}
           <div className="min-w-0">
             <p className="truncate text-sm font-bold leading-tight">{school?.name ?? "Carlspat Private School"}</p>

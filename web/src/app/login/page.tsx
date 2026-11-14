@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { GraduationCap, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { homePathFor, saveSession, SessionUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -69,9 +69,8 @@ function LoginForm() {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={school.logoUrl} alt="School logo" className="mx-auto h-16 w-16 rounded-full object-cover" />
         ) : (
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <GraduationCap className="h-8 w-8" />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icons/icon-192.png" alt="OlufunmilyoSMS school logo" className="mx-auto h-16 w-16 rounded-full object-contain" />
         )}
         <h1 className="mt-3 text-2xl font-bold">{school?.name ?? "Carlspat Private School"}</h1>
         <p className="text-sm italic text-muted-foreground">
@@ -82,7 +81,7 @@ function LoginForm() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in to your portal</CardTitle>
-          <CardDescription>Admin · Teacher · Parent · Student · Bursar</CardDescription>
+            <CardDescription>Admin · Teacher · Parent · Student · Bursar · Stakeholder</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">

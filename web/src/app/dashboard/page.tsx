@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { GraduationCap, Users, Wallet, CalendarCheck, TrendingUp, TrendingDown, Scale } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
@@ -30,6 +31,7 @@ interface ParentStats {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const user = typeof window !== "undefined" ? getUser() : null;
   const isStaff = user && ["SUPER_ADMIN", "ADMIN", "TEACHER", "ACCOUNTANT"].includes(user.role);
   const canSeeFinance = user && ["SUPER_ADMIN", "ADMIN", "ACCOUNTANT"].includes(user.role);
@@ -40,15 +42,19 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!user) return;
+    if (user.role === "STAKEHOLDER") {
+      router.replace("/dashboard/stakeholder-registrations");
+      return;
+    }
     if (isStaff) {
       api.get<ApiResponse<StaffStats>>("/dashboard/stats").then((r) => setStaff(r.data)).catch((e) => setError(e.message));
     } else {
       api.get<ApiResponse<ParentStats>>("/dashboard/me").then((r) => setMe(r.data)).catch((e) => setError(e.message));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [router]);
 
-  if (!user) return null;
+  if (!user || user.role === "STAKEHOLDER") return null;
 
   return (
     <div>

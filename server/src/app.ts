@@ -26,6 +26,8 @@ import userRoutes from "./routes/users";
 import expenseRoutes from "./routes/expenses";
 import resourceRoutes from "./routes/resources";
 import platformRoutes from "./routes/platform";
+import stakeholderRoutes from "./routes/stakeholders";
+import syncRoutes from "./routes/sync";
 
 export function createApp() {
   const app = express();
@@ -94,6 +96,8 @@ export function createApp() {
   app.use("/api/v1/users", userRoutes);
   app.use("/api/v1/expenses", expenseRoutes);
   app.use("/api/v1/resources", resourceRoutes);
+  app.use("/api/v1/stakeholders", stakeholderRoutes);
+  app.use("/api/v1/sync", syncRoutes);
   // Sits outside the school fence — see routes/platform.ts.
   app.use("/api/v1/platform", platformRoutes);
 
