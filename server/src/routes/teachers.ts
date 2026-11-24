@@ -113,24 +113,16 @@ router.post(
     const schoolId = currentSchoolId(req);
     const { firstName, lastName, email, phone, password, ...profile } = req.body;
 
-    const teacher = await prisma.teacher.create({
-      data: {
-        schoolId,
-        staffNo: await nextStaffNo(schoolId),
-        ...profile,
-        user: {
-          create: {
-            schoolId,
-            email: email.toLowerCase(),
-            passwordHash: await hashPassword(password),
-            role: Role.TEACHER,
-            firstName,
-            lastName,
-            phone,
-          },
-        },
-      },
-      include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
+    const staffNo = await nextStaffNo(schoolId);
+    const passwordHash = await hashPassword(password);
+    const teacher = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: { schoolId, email: email.toLowerCase(), passwordHash, role: Role.TEACHER, firstName, lastName, phone },
+      });
+      return tx.teacher.create({
+        data: { schoolId, staffNo, userId: user.id, ...profile },
+        include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
+      });
     });
     audit(req, "teacher.create", "Teacher", teacher.id);
     res.status(201).json({ success: true, data: teacher });
