@@ -19,7 +19,7 @@ interface School {
   logoUrl: string | null; headTeacherName: string | null;
 }
 interface Term { id: string; name: string; isCurrent: boolean; startDate: string; endDate: string }
-interface SessionRow { id: string; name: string; isCurrent: boolean; terms: Term[] }
+interface SessionRow { id: string; name: string; startDate: string; endDate: string; isCurrent: boolean; terms: Term[] }
 interface GradeScale { minScore: number; maxScore: number; grade: string; remark: string }
 interface Assessment { name: string; maxScore: number; order: number; isExam: boolean }
 
@@ -166,6 +166,8 @@ function Sessions() {
   const [saving, setSaving] = useState(false);
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const [confirmPromote, setConfirmPromote] = useState<SessionRow | null>(null);
+  const [editSession, setEditSession] = useState<SessionRow | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", startDate: "", endDate: "" });
 
   const load = () =>
     api.get<ApiResponse<SessionRow[]>>("/settings/sessions").then((r) => setSessions(r.data)).catch(() => null);
@@ -199,6 +201,22 @@ function Sessions() {
       load();
     } catch (err) {
       setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveSession(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editSession) return;
+    setSaving(true);
+    try {
+      await api.put(`/settings/sessions/${editSession.id}`, editForm);
+      setEditSession(null);
+      setMessage({ type: "success", text: "Session updated" });
+      load();
+    } catch (err) {
+      setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Failed to update session" });
     } finally {
       setSaving(false);
     }
@@ -243,6 +261,11 @@ function Sessions() {
             <CardTitle>
               {s.name} {s.isCurrent && <Badge variant="success" className="ml-2">Current session</Badge>}
             </CardTitle>
+            <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => {
+              setEditSession(s);
+              setEditForm({ name: s.name, startDate: s.startDate.slice(0, 10), endDate: s.endDate.slice(0, 10) });
+            }}>Edit</Button>
             <Button
               variant="outline"
               size="sm"
@@ -253,6 +276,7 @@ function Sessions() {
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Promoting…</>
                 : <><GraduationCap className="h-3.5 w-3.5" /> Promote All Students</>}
             </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -278,6 +302,15 @@ function Sessions() {
           </CardContent>
         </Card>
       ))}
+
+      <Dialog open={Boolean(editSession)} onClose={() => setEditSession(null)} title="Edit academic session">
+        <form onSubmit={saveSession} className="space-y-3">
+          <div><Label htmlFor="edit-session-name">Name</Label><Input id="edit-session-name" required pattern="\d{4}/\d{4}" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} /></div>
+          <div><Label htmlFor="edit-session-start">Start</Label><Input id="edit-session-start" type="date" required value={editForm.startDate} onChange={(e) => setEditForm((f) => ({ ...f, startDate: e.target.value }))} /></div>
+          <div><Label htmlFor="edit-session-end">End</Label><Input id="edit-session-end" type="date" required value={editForm.endDate} onChange={(e) => setEditForm((f) => ({ ...f, endDate: e.target.value }))} /></div>
+          <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setEditSession(null)}>Cancel</Button><Button type="submit" disabled={saving}>Save changes</Button></div>
+        </form>
+      </Dialog>
 
       {/* Promotion confirmation dialog */}
       <Dialog open={Boolean(confirmPromote)} onClose={() => setConfirmPromote(null)} title="Promote All Students">
