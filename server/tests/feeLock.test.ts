@@ -6,7 +6,9 @@
 import request from "supertest";
 
 const mockPrisma = {
+  school: { findUnique: jest.fn() },
   student: { findUnique: jest.fn() },
+  term: { findUnique: jest.fn(), findFirst: jest.fn() },
   studentFeeItem: { findMany: jest.fn().mockResolvedValue([]) },
   feeStructure: { findMany: jest.fn() },
   feeWaiver: { aggregate: jest.fn() },
@@ -15,6 +17,9 @@ const mockPrisma = {
 };
 
 jest.mock("../src/lib/prisma", () => ({ prisma: mockPrisma }));
+jest.mock("../src/services/resultService", () => ({
+  computeStudentResult: jest.fn().mockResolvedValue({ subjects: [{ subject: "English" }] }),
+}));
 
 import { createApp } from "../src/app";
 import { signAccessToken } from "../src/utils/jwt";
@@ -40,6 +45,8 @@ function arrange({ paid }: { paid: number }) {
   ]);
   mockPrisma.feeWaiver.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
   mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: paid } });
+  mockPrisma.term.findFirst.mockResolvedValue({ id: "term-1", schoolId: "school-1" });
+  mockPrisma.school.findUnique.mockResolvedValue({ id: "school-1", isActive: true, subscriptionStatus: "ACTIVE", subscriptionEndsAt: null });
 }
 
 beforeEach(() => jest.clearAllMocks());
@@ -97,5 +104,34 @@ describe("Report card fee lock", () => {
       .get("/api/v1/report-cards/student-1/access?termId=term-1")
       .set("Authorization", `Bearer ${parentToken}`);
     expect(res.status).toBe(403);
+  });
+});
+
+describe("Student results fee lock", () => {
+  it("hides scores from a parent with outstanding fees", async () => {
+    arrange({ paid: 30000 });
+    const res = await request(app)
+      .get("/api/v1/results/student/student-1")
+      .set("Authorization", `Bearer ${parentToken}`);
+    expect(res.status).toBe(402);
+    expect(res.body.message).toBe(REPORT_CARD_LOCK_MESSAGE);
+    expect(res.body.data).toBeUndefined();
+  });
+
+  it("shows results after payment in full", async () => {
+    arrange({ paid: 50000 });
+    const res = await request(app)
+      .get("/api/v1/results/student/student-1")
+      .set("Authorization", `Bearer ${parentToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.subjects).toHaveLength(1);
+  });
+
+  it("keeps staff access to results while fees are outstanding", async () => {
+    arrange({ paid: 0 });
+    const res = await request(app)
+      .get("/api/v1/results/student/student-1")
+      .set("Authorization", `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
   });
 });

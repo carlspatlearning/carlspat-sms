@@ -9,6 +9,7 @@ import { authenticate, authorize, assertCanAccessStudent, ADMINS } from "../midd
 import { currentSchoolId, requireActiveSchool } from "../middleware/tenant";
 import { audit } from "../middleware/audit";
 import { computeStudentResult, rankClass } from "../services/resultService";
+import { assertReportCardUnlocked } from "../services/feeService";
 
 const router = Router();
 router.use(authenticate, requireActiveSchool);
@@ -142,8 +143,7 @@ router.get(
   })
 );
 
-// GET /results/student/:studentId?termId= — full computed result (no fee lock: scores
-// are viewable in the portal; the lock applies to the official report card)
+// GET /results/student/:studentId?termId= — full computed result
 router.get(
   "/student/:studentId",
   asyncHandler(async (req, res) => {
@@ -154,6 +154,9 @@ router.get(
       ? await prisma.term.findUnique({ where: { id: termId } })
       : await prisma.term.findFirst({ where: { isCurrent: true, schoolId } });
     if (!term || term.schoolId !== schoolId) throw ApiError.badRequest("No term specified and no current term configured");
+    if (req.auth!.role === Role.PARENT || req.auth!.role === Role.STUDENT) {
+      await assertReportCardUnlocked(req.params.studentId, term.id);
+    }
     const result = await computeStudentResult(req.params.studentId, term.id);
     res.json({ success: true, data: result });
   })

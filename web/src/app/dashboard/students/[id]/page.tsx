@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, ApiResponse } from "@/lib/api";
+import { api, ApiClientError, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { cn, formatDate, formatNaira, fullName } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -69,6 +69,8 @@ export default function StudentDetailPage() {
   const [student, setStudent] = useState<Student | null>(null);
   const [attendance, setAttendance] = useState<AttendanceData | null>(null);
   const [result, setResult] = useState<ResultData | null>(null);
+  const [resultError, setResultError] = useState<string | null>(null);
+  const [resultLoading, setResultLoading] = useState(false);
   const [fees, setFees] = useState<FeeBalance | null>(null);
   const [tab, setTab] = useState<Tab>("profile");
   const [error, setError] = useState<string | null>(null);
@@ -81,13 +83,27 @@ export default function StudentDetailPage() {
     if (tab === "attendance" && !attendance) {
       api.get<ApiResponse<AttendanceData>>(`/attendance/student/${id}`).then((r) => setAttendance(r.data)).catch(() => null);
     }
-    if (tab === "results" && !result) {
-      api.get<ApiResponse<ResultData>>(`/results/student/${id}`).then((r) => setResult(r.data)).catch(() => null);
-    }
     if (tab === "fees" && !fees) {
       api.get<ApiResponse<FeeBalance>>(`/fees/balance/${id}`).then((r) => setFees(r.data)).catch(() => null);
     }
-  }, [tab, id, attendance, result, fees]);
+  }, [tab, id, attendance, fees]);
+
+  useEffect(() => {
+    if (tab !== "results") return;
+    let active = true;
+    setResult(null);
+    setResultError(null);
+    setResultLoading(true);
+    api.get<ApiResponse<ResultData>>(`/results/student/${id}`)
+      .then((r) => { if (active) setResult(r.data); })
+      .catch((e: unknown) => {
+        if (active) setResultError(e instanceof ApiClientError && e.status === 402
+          ? e.message
+          : e instanceof Error ? e.message : "Could not load results.");
+      })
+      .finally(() => { if (active) setResultLoading(false); });
+    return () => { active = false; };
+  }, [tab, id]);
 
   async function removeStudent() {
     if (!student) return;
@@ -239,7 +255,9 @@ export default function StudentDetailPage() {
 
       {tab === "results" && (
         <div className="space-y-4">
-          {result ? (
+          {resultError ? (
+            <Alert variant="destructive" title="Results unavailable">{resultError}</Alert>
+          ) : result ? (
             result.subjects.length > 0 ? (
               <>
                 <div className="grid gap-4 sm:grid-cols-3">
@@ -298,7 +316,7 @@ export default function StudentDetailPage() {
               <Alert>No results recorded for the current term yet.</Alert>
             )
           ) : (
-            <p className="text-muted-foreground">Loading results…</p>
+            <p className="text-muted-foreground">{resultLoading ? "Loading results…" : "Results unavailable."}</p>
           )}
         </div>
       )}
@@ -311,7 +329,7 @@ export default function StudentDetailPage() {
                 <Alert variant="success" title="Fees fully paid">There is no outstanding balance for the current term.</Alert>
               ) : (
                 <Alert variant="destructive" title={`Outstanding: ${formatNaira(fees.outstanding)}`}>
-                  Access to the report card is restricted until school fees have been fully paid.
+                  Results and the report card can only be viewed when outstanding school fees have been paid in full.
                 </Alert>
               )}
               <Table>

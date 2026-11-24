@@ -75,7 +75,7 @@ export async function getFeeBalance(studentId: string, termId: string): Promise<
 }
 
 export const REPORT_CARD_LOCK_MESSAGE =
-  "Access to report card is restricted until school fees have been fully paid.";
+  "Results can only be viewed when outstanding school fees have been paid in full.";
 
 /**
  * Business rule: report cards are inaccessible while any balance is outstanding.
