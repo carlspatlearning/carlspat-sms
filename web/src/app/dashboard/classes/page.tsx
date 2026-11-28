@@ -115,9 +115,20 @@ export default function ClassesPage() {
     <div>
       <PageHeader title="Classes" description="Class arms, form teachers and enrolment">
         {isAdmin && (
-          <Button onClick={openAdd}>
-            <Plus className="h-4 w-4" /> Add Class
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={async () => {
+              try {
+                await api.download("/classes/students.pdf", "all-active-students-by-class.pdf");
+              } catch (err) {
+                setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Could not download the school roster." });
+              }
+            }}>
+              <Download className="h-4 w-4" /> All Students PDF
+            </Button>
+            <Button onClick={openAdd}>
+              <Plus className="h-4 w-4" /> Add Class
+            </Button>
+          </div>
         )}
       </PageHeader>
 

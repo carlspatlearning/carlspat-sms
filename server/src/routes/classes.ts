@@ -14,6 +14,69 @@ router.use(authenticate, requireActiveSchool);
 
 // GET /classes — all roles need the class list (dropdowns etc.)
 router.get(
+  "/students.pdf",
+  authorize(...ADMINS),
+  asyncHandler(async (req, res) => {
+    const schoolId = currentSchoolId(req);
+    const [school, classes] = await Promise.all([
+      prisma.school.findUnique({ where: { id: schoolId }, select: { name: true } }),
+      prisma.classRoom.findMany({
+        where: { schoolId },
+        select: {
+          id: true, name: true, section: true,
+          students: {
+            where: { schoolId, status: "ACTIVE" },
+            select: { firstName: true, middleName: true, lastName: true, admissionNo: true, gender: true, dateOfBirth: true, parent: { select: { user: { select: { phone: true } } } } },
+            orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          },
+        },
+        orderBy: [{ level: "asc" }, { name: "asc" }, { section: "asc" }],
+      }),
+    ]);
+    const total = classes.reduce((sum, cls) => sum + cls.students.length, 0);
+    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 32, bufferPages: true });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+    const left = 32, width = doc.page.width - left * 2, columns = [30, 185, 120, 65, 90, width - 490];
+    const headers = ["#", "Student name", "Admission No.", "Gender", "Date of birth", "Parent phone"];
+    function schoolHeader() {
+      doc.fillColor("#1e3a5f").font("Helvetica-Bold").fontSize(17).text((school?.name ?? "School").toUpperCase(), left, 30, { width, align: "center" });
+      doc.fontSize(12).text("ALL ACTIVE STUDENTS — BY CLASS", left, 57, { width, align: "center" });
+      doc.fillColor("#374151").font("Helvetica").fontSize(9).text(`Total active students: ${total}  |  Generated: ${new Date().toLocaleDateString("en-GB")}`, left, 77, { width, align: "center" });
+    }
+    function drawTableHeader(y: number) {
+      doc.rect(left, y, width, 22).fill("#1e3a5f"); doc.fillColor("#fff").font("Helvetica-Bold").fontSize(8);
+      let x = left + 4; headers.forEach((h, i) => { doc.text(h, x, y + 7, { width: columns[i] - 8, lineBreak: false }); x += columns[i]; });
+    }
+    schoolHeader(); let y = 105;
+    for (const cls of classes) {
+      if (cls.students.length === 0) continue;
+      if (y + 44 > doc.page.height - 38) { doc.addPage({ size: "A4", layout: "landscape", margin: 32 }); schoolHeader(); y = 105; }
+      const className = `${cls.name}${cls.section ? ` ${cls.section}` : ""}`;
+      doc.fillColor("#1e3a5f").font("Helvetica-Bold").fontSize(10).text(`${className} — ${cls.students.length} active student${cls.students.length === 1 ? "" : "s"}`, left, y, { width }); y += 16;
+      drawTableHeader(y); y += 22;
+      for (const [index, s] of cls.students.entries()) {
+        if (y + 22 > doc.page.height - 38) { doc.addPage({ size: "A4", layout: "landscape", margin: 32 }); schoolHeader(); y = 105; doc.fillColor("#1e3a5f").font("Helvetica-Bold").fontSize(10).text(`${className} — continued`, left, y, { width }); y += 16; drawTableHeader(y); y += 22; }
+        if (index % 2) doc.rect(left, y, width, 22).fill("#f3f4f6");
+        const values = [String(index + 1), [s.lastName, s.firstName, s.middleName].filter(Boolean).join(" "), s.admissionNo, s.gender, s.dateOfBirth.toLocaleDateString("en-GB"), s.parent?.user.phone ?? "—"];
+        doc.fillColor("#111827").font("Helvetica").fontSize(8); let x = left + 4;
+        values.forEach((value, i) => { doc.text(value, x, y + 7, { width: columns[i] - 8, lineBreak: false }); x += columns[i]; });
+        doc.moveTo(left, y + 22).lineTo(left + width, y + 22).strokeColor("#e5e7eb").lineWidth(0.4).stroke(); y += 22;
+      }
+      y += 12;
+    }
+    if (total === 0) doc.fillColor("#374151").font("Helvetica").fontSize(10).text("No active students are currently assigned to classes.", left, y + 12, { width, align: "center" });
+    const pages = doc.bufferedPageRange();
+    for (let page = 0; page < pages.count; page++) { doc.switchToPage(page); doc.fillColor("#6b7280").fontSize(7).text(`${school?.name ?? "School"} — Confidential`, left, doc.page.height - 22, { width: width / 2 }).text(`Page ${page + 1} of ${pages.count}`, left, doc.page.height - 22, { width, align: "right" }); }
+    doc.end(); const pdf = await finished;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "attachment; filename=all-active-students-by-class.pdf");
+    res.send(pdf);
+  })
+);
+
+router.get(
   "/",
   asyncHandler(async (req, res) => {
     const classes = await prisma.classRoom.findMany({
