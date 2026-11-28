@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Download, Loader2, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { api, ApiResponse } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { PageHeader } from "@/components/page-header";
@@ -160,6 +160,15 @@ export default function ClassesPage() {
                       className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary">
                       <Users className="h-3.5 w-3.5" /> Manage
                     </Link>
+                    <Button variant="outline" size="sm" onClick={async () => {
+                      try {
+                        await api.download(`/classes/${c.id}/students.pdf`, `${c.name.replace(/[^a-z0-9]+/gi, "-")}-students.pdf`);
+                      } catch (err) {
+                        setMessage({ type: "destructive", text: err instanceof Error ? err.message : "Could not download class list." });
+                      }
+                    }} title="Download student roster PDF">
+                      <Download className="h-3.5 w-3.5" /> PDF
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => deleteClass(c)}>
                       <Trash2 className="h-3.5 w-3.5 text-destructive" />
                     </Button>
