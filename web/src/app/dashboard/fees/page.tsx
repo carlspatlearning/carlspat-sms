@@ -26,6 +26,7 @@ interface Structure {
 }
 interface StudentOpt { id: string; firstName: string; lastName: string; admissionNo: string; classRoomId?: string | null }
 interface StudentFeeItem { id: string; amount: string; category: Category }
+interface DisplayFeeItem { id: string; amount: string; category: Category; inherited?: boolean }
 interface Waiver {
   id: string; amount: string; reason: string;
   student: { firstName: string; lastName: string; admissionNo: string };
@@ -76,6 +77,7 @@ function StaffFees() {
 
   // ── Student fee items ────────────────────────────────────────────
   const [feeStudent, setFeeStudent] = useState<StudentOpt | null>(null);
+  const [feeClassId, setFeeClassId] = useState("");
   const [studentItems, setStudentItems] = useState<StudentFeeItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [addItemDialog, setAddItemDialog] = useState(false);
@@ -203,7 +205,14 @@ function StaffFees() {
     setItemsLoading(true);
     try {
       const r = await api.get<ApiResponse<StudentFeeItem[]>>(`/fees/student-items?studentId=${student.id}&termId=${term.id}`);
-      setStudentItems(r.data);
+      if (r.data.length > 0) {
+        setStudentItems(r.data);
+      } else {
+        const classFees = structures
+          .filter((s) => s.classRoom.id === student.classRoomId && s.term.id === term.id)
+          .map((s) => ({ ...s, inherited: true }));
+        setStudentItems(classFees);
+      }
     } catch { setStudentItems([]); }
     finally { setItemsLoading(false); }
   }
@@ -401,8 +410,16 @@ function StaffFees() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label htmlFor="feeStudent">Select student</Label>
-            <Select id="feeStudent" value={feeStudent?.id ?? ""}
+            <Label htmlFor="feeClass">Class</Label>
+            <Select id="feeClass" value={feeClassId}
+              onChange={(e) => { setFeeClassId(e.target.value); setFeeStudent(null); setStudentItems([]); }}>
+              <option value="">— Pick a class —</option>
+              {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="feeStudent">Student</Label>
+            <Select id="feeStudent" value={feeStudent?.id ?? ""} disabled={!feeClassId}
               onChange={(e) => {
                 const s = students.find((x) => x.id === e.target.value) ?? null;
                 setFeeStudent(s);
@@ -410,7 +427,7 @@ function StaffFees() {
                 if (s) loadStudentItems(s);
               }}>
               <option value="">— Pick a student —</option>
-              {students.map((s) => (
+              {students.filter((s) => s.classRoomId === feeClassId).map((s) => (
                 <option key={s.id} value={s.id}>{s.firstName} {s.lastName} ({s.admissionNo})</option>
               ))}
             </Select>
@@ -424,8 +441,7 @@ function StaffFees() {
                 <>
                   {studentItems.length === 0 ? (
                     <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-                      No specific fees assigned — this student is currently billed using the class-wide fee structure.
-                      Add items below to switch to individual billing.
+                      No fee items configured for this student or class in the current term. Add items below.
                     </p>
                   ) : (
                     <Table>
@@ -433,10 +449,10 @@ function StaffFees() {
                       <TBody>
                         {studentItems.map((item) => (
                           <TR key={item.id}>
-                            <TD className="font-medium">{item.category.name}</TD>
+                            <TD className="font-medium">{item.category.name}{"inherited" in item && item.inherited ? <span className="ml-2 text-xs text-muted-foreground">(class fee)</span> : null}</TD>
                             <TD className="text-right">{formatNaira(Number(item.amount))}</TD>
                             <TD className="text-right">
-                              <Button variant="outline" size="sm" onClick={() => removeStudentItem(item.id)}>
+                              <Button variant="outline" size="sm" disabled={Boolean("inherited" in item && item.inherited)} title={"inherited" in item && item.inherited ? "Add an individual fee assignment before editing this class fee" : "Remove fee item"} onClick={() => removeStudentItem(item.id)}>
                                 <Trash2 className="h-3.5 w-3.5 text-destructive" />
                               </Button>
                             </TD>
@@ -450,7 +466,7 @@ function StaffFees() {
                       </TBody>
                     </Table>
                   )}
-                  <Button size="sm" className="mt-3" onClick={() => {
+                      <Button size="sm" className="mt-3" onClick={() => {
                     const defaultAmt = structures.find((s) => s.classRoom.id === feeStudent.classRoomId)?.amount ?? "";
                     setAddItemForm({ categoryId: "", amount: String(Number(defaultAmt) || "") });
                     setAddItemDialog(true);
